@@ -1,0 +1,649 @@
+# -*- coding: utf-8 -*-   
+import pandas as pd   
+import numpy as np   
+import socket   
+import logging   
+from datetime import datetime   
+from dateutil import parser   
+import math   
+from dateutil.relativedelta import relativedelta   
+import os   
+import matplotlib.pyplot as plt   
+from matplotlib.gridspec import GridSpec   
+import pathlib   
+import time   
+import seaborn as sns   
+
+from tqdm import tqdm 
+from matplotlib import font_manager, rc, rcParams   
+font_name = font_manager.FontProperties(fname="c:/Windows/Fonts/malgun.ttf").get_name()   
+rc('font', family=font_name)   
+rcParams['axes.unicode_minus'] = False   
+
+def get_master_from_file(file_name, year_begin, year_end):   
+    df_master = pd.read_excel("./" + file_name + ".xlsx", encoding='euc-kr', sheet_name= '스코어테이블')   
+    df_master = df_master[df_master['구분'] == '대표']   
+    df_master.loc[(df_master['정렬'] == '내림'), '정렬'] = False   
+    df_master.loc[(df_master['정렬'] == '오름'), '정렬'] = True   
+    df_master = df_master.set_index("아이템명")   
+
+    df = pd.read_excel("./" + file_name + ".xlsx", encoding='euc-kr', sheet_name='데이터프레임', header=[8], thousands=",")   
+
+    # False가 처음나온애들 / True가 겹치는애들   
+    # dictionary = df[['Item', 'Item Name ']][~df[['Item', 'Item Name ']].duplicated()]   
+
+    df.drop(columns=['Kind', 'Frequency', 'Item'], inplace=True)   
+
+    df = df.melt(id_vars=['Symbol', 'Symbol Name', 'Item Name '])   
+    df = df.set_index(['variable', 'Symbol', 'Symbol Name', 'Item Name ']).unstack(level='Item Name ')   
+    df.columns = df.columns.get_level_values(1)   
+
+    df['유동비율_1YR'] = (df['유동자산(천원)'] / df['유동부채(천원)']) * 100   
+    df['현금비율_1YR'] = (df['현금및현금성자산(천원)'] / df['유동부채(천원)']) * 100   
+    df['수정주가(원)'] = df['수정주가(원)'].astype(float)  
+      
+    cols = df.reset_index().columns   
+    cols[~cols.isin(df_master['FnGuide 아이템명'])]   
+
+    df_factor = df.reset_index().rename(columns={'variable': 'Date', "Symbol Name": "Name"})   
+    df_factor.rename(columns=dict(zip(df_master['FnGuide 아이템명'], df_master.index)), inplace=True)   
+     
+    # 스팩주들 제거   
+    remove = [name for name in df_factor["종목명"] if "스팩" in name]   
+    df_bool = df_factor["종목명"].isin(remove)   
+    df_factor = df_factor[df_bool != True]   
+
+    # 백테스팅 진행할 연도 설정   
+    df_factor = df_factor[(year_begin <= df_factor['Date'].dt.year) & (df_factor['Date'].dt.year <= year_end)]   
+     
+    # 필터링   
+    df_factor = df_factor[~df_factor['산업명'].isna()]   
+    df_factor = df_factor[~df_factor['상장주식'].isna()]  
+     
+    # 우선주 제거   
+    df_factor = df_factor[df_factor['종목코드'].str[-1:] == '0']   
+   
+    df_factor = df_factor.groupby(['종목코드']).ffill(limit=3) 
+     
+    # 상폐여부 확인 (신규추가 08/03) 
+    file_name_4 = "상장폐지여부_20200730" 
+    delisting = pd.read_excel("./" + file_name_4 + ".xlsx", encoding= 'euc-kr',header = [5]) 
+    delisting = delisting.set_index("Symbol") 
+    delisting['상장(등록)일자'] = pd.to_datetime(delisting['상장(등록)일자'], format = "%Y%m%d.0", errors= 'coerce') 
+    delisting['상장폐지일자'] = pd.to_datetime(delisting['상장폐지일자'], format = "%Y%m%d.0", errors= 'coerce') 
+    delisting['시장이전일'] = pd.to_datetime(delisting['시장이전일'], format = "%Y%m%d.0", errors= 'coerce') 
+     
+    remove = [name for name in delisting["Name"] if "스팩" in name]   
+    df_bool = delisting["Name"].isin(remove)   
+    delisting = delisting[df_bool != True]  
+
+    delisting = delisting[delisting.index.str[-1:] == '0']          
+     
+    return df_factor, df_master, delisting   
+
+
+# df_info = df / target_column= "시가총액" / quantile_count = 10 / 1등이 순위가 높은것임   
+def get_quantile(df_info, target_column, quantile_count):   
+    df_temp = pd.DataFrame() 
+    df_temp[target_column + "_Q그룹"] = pd.qcut(df_info[target_column], q=quantile_count, labels=np.arange(10, 0, -1))   
+    return df_temp   
+
+
+def preprocessing_data(df, df_master):   
+    df_tmp = df.copy()   
+    for val_col in df_master[df_master['Mid'] == 'Valuation'].index:   
+        df_tmp.loc[(df_tmp[val_col] < 0), val_col] = np.nan   
+    for val_col in df_master[df_master['Mid'] == 'Profit'].index:   
+        df_tmp.loc[(df_tmp[val_col] == '완전잠식'), val_col] = -100   
+    for val_col in df_master[df_master['Mid'] == 'Growth'].index:   
+        items = ['흑전', 'N/A(IFRS)', '당기잠식', '전기잠식'] 
+        items_2 = ['적지','적전','잠식지속','완전잠식'] 
+        df_tmp.loc[df_tmp[val_col].isin(items), val_col] = np.nan 
+        df_tmp.loc[df_tmp[val_col].isin(items_2), val_col] = -100 
+        # df_tmp.loc[((df_tmp[val_col] == '적전') | (df_tmp[val_col] == '흑전') | (df_tmp[val_col] == 'N/A(IFRS)') | (df_tmp[val_col] == '당기잠식') | (df_tmp[val_col] == '전기잠식') | (df_tmp[val_col]) == '잠식지속'), val_col] = np.nan   
+    for val_col in df_master[df_master['Mid'] == 'Stability'].index: 
+        items_2 = ['적지', '적전', '잠식지속', '완전잠식'] 
+        df_tmp.loc[df_tmp[val_col].isin(items_2), val_col] = -100   
+    # df_tmp.loc[df_tmp['배당률_1YR'].isnull(), '배당률_1YR'] = 0   
+
+    return df_tmp   
+
+
+# df_info = df_info.set_index("종목코드") / target_column = '매출액증가율_1YR' / target_group = '산업명' / ascend_order = False   
+def get_group_data(df_info, target_column, target_group, ascend_order):   
+    df_temp = pd.DataFrame()   
+    df_temp[target_column] = df_info[target_column]   
+    nan_group = df_info[df_info[target_column].isnull()]   
+    df_info = df_info.loc[df_info.index.difference(nan_group.index)]   
+    df_info[target_column] = df_info[target_column].astype('float64')   
+    column_name = target_column + "_" + target_group + "_순위"   
+    df_temp[column_name] = df_info.groupby(target_group)[target_column].rank(ascending=ascend_order).astype('int')   
+
+    column_name = target_column + "_" + target_group + "_전체수"   
+    count = df_info.groupby(target_group)[target_column].count()   
+    count = count.rename(column_name)   
+    count = pd.DataFrame(count)   
+    df_temp[column_name] = pd.merge(df_info, count, left_on=target_group, right_index=True, how='inner')[column_name]   
+
+    column_name = target_column + "_" + target_group + "_제외수"   
+    out_count = nan_group.groupby(target_group)[target_column].size()   
+    out_count = out_count.rename(column_name)   
+    out_count = pd.DataFrame(out_count)   
+    df_temp[column_name] = pd.merge(df_info, out_count, left_on=target_group, right_index=True, how='inner')[column_name]   
+
+    # column_name = target_column + "_" + target_group + "_평균"   
+    # mean = df_info.groupby(target_group)[target_column].mean().round(2)   
+    # mean = mean.rename(column_name)   
+    # mean = pd.DataFrame(mean)   
+    # df_temp[column_name] = pd.merge(df_info, mean, left_on=target_group, right_index=True, how='inner')[column_name]   
+
+    summ = df_info.groupby(target_group)["시가총액"].sum()   
+    column_name = target_group + "_시가총액합"   
+    summ = summ.rename(column_name)   
+    summ = pd.DataFrame(summ)   
+    df_info = pd.merge(df_info, summ, left_on=target_group, right_index=True, how='inner')   
+    df_info['weight'] = (df_info['시가총액'] / df_info[column_name])   
+    # df_temp['weight'] = df_info['weight']   
+
+    column_name = target_column + "_" + target_group + "_가중평균"   
+    grouped = df_info.groupby(target_group)   
+    weighted_avg_func = lambda g: np.average(g[target_column], weights=g['weight'])   
+    weight_mean = grouped.apply(weighted_avg_func)   
+    weight_mean = weight_mean.rename(column_name)   
+    weight_mean = pd.DataFrame(weight_mean)   
+    df_temp[column_name] = pd.merge(df_info, weight_mean, left_on=target_group, right_index=True, how='inner')[column_name]   
+
+
+    # column_name = target_column + "_" + target_group + "_백분율"   
+    # df_temp[column_name] = df_temp[(target_column + "_" + target_group + "_순위")] / df_temp[   
+    #     (target_column + "_" + target_group + "_전체수")]   
+    column_name = target_column + "_" + target_group + "_백분율"   
+    df_temp[column_name] = df_info.groupby(target_group)[target_column].rank(ascending=ascend_order, pct=True, method='min')   
+
+    column_name = target_column + "_" + target_group + "_점수"   
+    if ascend_order:   
+        grade = df_info.groupby(target_group)[target_column].transform(   
+            lambda x: pd.qcut(x, 4, labels=[4, 3, 2, 1]) if x.count() >= 4 else 1)   
+    else:   
+        grade = df_info.groupby(target_group)[target_column].transform(   
+            lambda x: pd.qcut(x, 4, labels=[4, 3, 2, 1]) if x.count() >= 4 else 1)   
+    grade = grade.astype('category')   
+    grade = grade.cat.add_categories(0)   
+    grade = grade.rename(column_name)   
+    grade = pd.DataFrame(grade)   
+    df_temp[column_name] = pd.merge(df_info, grade, left_index=True, right_index=True, how='inner')[   
+        column_name]   
+    df_temp[column_name] = df_temp[column_name].fillna(0)   
+    # df_temp = df_temp.drop(target_column, axis=1)   
+    return df_temp   
+
+
+# 시가총액별 랭크를 보여주는 함수   
+def get_rank(df, target_column, ascend_order):   
+    df_temp = pd.DataFrame()   
+    df_temp[target_column] = df[target_column]   
+    nan_group = df[df[target_column].isna()]   
+
+    df = df[~df[target_column].isna()]   
+    column_name = target_column + "_전체_순위"   
+    df_temp[column_name] = df[target_column].rank(ascending=ascend_order).astype('int')   
+
+    column_name = target_column + "_전체_전체수"   
+    df_temp[column_name] = len(df.index)   
+
+    column_name = target_column + "_전체_제외수"   
+    df_temp[column_name] = len(nan_group.index)   
+
+    column_name = target_column + "_전체_백분율"   
+    df_temp[column_name] = df[target_column].rank(ascending=ascend_order, pct=True, method='min')   
+
+    column_name = target_column + "_전체_점수"   
+    if ascend_order:   
+        grade = df[target_column].transform(lambda x: pd.qcut(x, 4, labels=[4, 3, 2, 1]))   
+    else:   
+        grade = df[target_column].transform(lambda x: pd.qcut(x, 4, labels=[1, 2, 3, 4]))   
+    grade = grade.cat.add_categories(0)   
+    grade = grade.rename(column_name)   
+    grade = pd.DataFrame(grade)   
+    df_temp[column_name] = pd.merge(df, grade, left_index=True, right_index=True, how='inner')[column_name]   
+    df_temp[column_name] = df_temp[column_name].fillna(0)   
+    return df_temp   
+
+
+def make_grade(df_data, column, ascend_order=False):   
+    df_temp = get_rank(df_data, column, ascend_order)   
+    df_data = pd.concat([df_data, df_temp], axis=ha1)   
+    df_data = df_data.loc[:, ~df_data.columns.duplicated()]   
+    column_name = column + "_점수"   
+    df_data[column_name] = df_data[df_data.columns[(df_data.dtypes == 'category').values]].mean(axis=1)   
+    return df_data   
+
+# df_raw = df / score_table = profit_group_data / time_window= 180 
+def get_mdd(df_raw, score_table, time_window): 
+    df_raw = df.copy() 
+    score_table = score_table.copy() 
+    score_table['Date'] = date     
+     
+    # 여기다가 함수를 하나 집어넣어서 기간별 MDD을 확인할것임 
+    # df_price에서 window 기간만큼 MDD를 확인하는 방식 
+    price_table = df_price[df_price.index.get_level_values(1) > date] 
+    price_table_boolean = price_table.index.get_level_values(0).isin(df_raw['종목코드']) 
+    price_table = price_table[price_table_boolean] 
+    # Draw down 값 구하기 
+    temp_ret = price_table.iloc[::-1].groupby('Symbol').apply(lambda x : np.log(x.rolling(time_window, min_periods= 1).min() / x )) 
+     
+    # MDD 구하기 
+    grade_A = score_table.mean(axis=1) 
+    grade_A = grade_A.index[grade_A <= .1] 
+    # grade_A = grade_A.index[grade_A.rank(pct= True) >= .9] 
+    # grade_A = score_table.index[score_table.iloc[:,4].rank(pct= True) >= .9] # pct 점수가 높으면 좋은것임 
+    grade_A_mdd = temp_ret.index.get_level_values(0).isin(grade_A) 
+    grade_A_mdd = temp_ret[grade_A_mdd]   
+     
+    grade_D = score_table.mean(axis=1) 
+    grade_D = grade_D.index[grade_D.rank(pct= True) >= .9] 
+    # grade_D = grade_D.index[grade_D.rank(pct= True) <= .1] 
+    # grade_D = score_table.index[score_table.iloc[:,4].rank(pct= True) <= .1] 
+    grade_D_mdd = temp_ret.index.get_level_values(0).isin(grade_D) 
+    grade_D_mdd = temp_ret[grade_D_mdd]   
+     
+    # 코스피 MDD 
+    benchmark_price = ksp_price[ksp_price.index.isin(grade_D_mdd.index.get_level_values(1).unique())]  
+    benchmark_price = benchmark_price.iloc[:,1].astype(float) # 코스피 사용 
+     
+    benchmark_mdd = np.log(benchmark_price.iloc[::-1].rolling(time_window, min_periods= 1).min() / benchmark_price.iloc[::-1]).iloc[::-1] 
+     
+    fig, ax1 = plt.subplots(figsize=(10,5)) 
+    fig.set_canvas(plt.gcf().canvas) 
+    # ax2 = ax1.twinx() 
+     
+    # Plot with properties 
+    line1 = ax1.plot(grade_A_mdd.groupby('Date').mean().head(365), color= 'red', alpha= .8, label= "수익성_상위10%") 
+    line2 = ax1.plot(grade_D_mdd.groupby('Date').mean().head(365), color= 'blue', alpha= .8, label='수익성_하위10%') 
+    #line3 = ax1.plot(benchmark_mdd.head(365),color= 'black', alpha= .8, label='KOSPI_MDD') 
+    #line4 = ax2.plot(benchmark_price.head(420), color='g', alpha= .9, linestyle = '--') 
+    #line4 = ax1.plot(benchmark_mdd.head(365),color= 'black', alpha= .8, label='KOSPI_MDD') 
+     
+    # Plot legend for all y axis 
+    lines = line1 + line2 #  + line3 
+    labels = [l.get_label() for l in lines] 
+    plt.legend(lines, labels, loc=4) 
+
+    #fill_betwenn 
+    ax1.fill_between(grade_A_mdd.groupby('Date').mean().head(365).index, grade_A_mdd.groupby('Date').mean().head(365).iloc[:,0], alpha=.1, color='red') 
+    ax1.fill_between(grade_D_mdd.groupby('Date').mean().head(365).index, grade_D_mdd.groupby('Date').mean().head(365).iloc[:,0], alpha=.1, color='blue') 
+    fig.tight_layout() 
+     
+    """ 
+    # 1 
+    fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(12,9))  
+    ax[0].plot(grade_A_mdd.groupby('Date').mean().head(365), color= 'red', alpha= .8) 
+    ax[0].plot(grade_D_mdd.groupby('Date').mean().head(365), color= 'blue', alpha= .8) 
+    ax[1].plot(grade_D_mdd.groupby('Date').mean().head(365), color= 'blue', alpha= .8)   
+     
+    # 2 
+    fig = plt.figure(figsize = (12,7)) 
+    plt.plot(grade_A_mdd.groupby('Date').mean().head(365), color= 'red', alpha= .8) 
+    plt.plot(grade_D_mdd.groupby('Date').mean().head(365), color= 'blue', alpha= .8) 
+
+    plt.grid(False) 
+     
+    """ 
+    return fig 
+
+# delisting_table = delisting /  / window_month = 24 / quantile_counter = 5 
+def delisting_probability(delisting_table, stability_group_data, window_month, quantile_counter): 
+    delisting_table = delisting.copy() 
+    delisting_table = delisting_table[(~(delisting_table['상장폐지일자']<= date) & (delisting_table['상장(등록)일자'] < date))] # True인 종목들은 이미 폐지된것이라 제거하면됨 
+    stability_group_data['Stability_점수'] = stability_group_data.mean(axis=1)  
+    # stability_group_data[stability_group_data.isna().all(axis=1)] 무려 452개가 값이 안나옴 
+     
+    delisting_table = delisting_table[['상장(등록)일자', '상장폐지일자', '시장이전일']].merge(stability_group_data, left_index= True, right_index= True, how= 'inner') 
+     
+    table = df_main.merge(delisting_table, left_index= True, right_index= True, how= 'inner') 
+    table_total_delisting = table[table['상장폐지일자'] <= pd.to_datetime(date) + pd.DateOffset(months= window_month)] 
+     
+    table['Stability_Q'] = pd.qcut(table['Stability_점수'], q=quantile_counter, labels=np.arange(5, 0, -1))  
+    table['상폐_counter'] = table['상장폐지일자'] <= pd.to_datetime(date) + pd.DateOffset(months= window_month) 
+    table_counter = table[(table['Stability_점수'].isna()) & (table['상폐_counter'] == True)] 
+     
+    quantile_table = table.groupby(['Stability_Q', '상폐_counter']).count() 
+    quantile_table = pd.DataFrame(quantile_table[quantile_table.index.get_level_values(1)]['Stability_점수'] )   
+    quantile_table.index = quantile_table.index.get_level_values(0) 
+    quantile_table = quantile_table.unstack() 
+    quantile_table = pd.DataFrame(quantile_table.append(pd.Series([len(table_counter),len(table_total_delisting)],index=['na','total']))) 
+    quantile_table.rename(columns={0 : date}, inplace= True) 
+     
+    grade_A_delisting = table[table['Stability_점수'].rank(pct=True) <= .1] 
+    grade_A_boolean = grade_A_delisting[grade_A_delisting['상장폐지일자'] <= pd.to_datetime(date) + pd.DateOffset(months= window_month)] 
+    grade_A_delisting_pct = len(grade_A_boolean) / len(grade_A_delisting) 
+    # a = delisting[delisting.index.isin(grade_A_boolean.index)] 
+     
+    grade_D_delisting = table[table['Stability_점수'].rank(pct=True) >= .9] 
+    grade_D_boolean  = grade_D_delisting [grade_D_delisting ['상장폐지일자'] <= pd.to_datetime(date) + pd.DateOffset(months= window_month)]  
+    grade_D_delisting_pct = len(grade_D_boolean) / len(grade_D_delisting) 
+    # b = delisting[delisting.index.isin(grade_D_boolean.index)] 
+     
+    delisting_final_table = pd.DataFrame([grade_A_delisting_pct, len(grade_A_delisting), len(grade_A_boolean), 
+                                          grade_D_delisting_pct, len(grade_D_delisting), len(grade_D_boolean), len(table_total_delisting)],  columns= [date]) 
+     
+     
+     
+    return delisting_final_table, quantile_table 
+
+
+     
+    ''' 
+    boolean = df_raw['종목코드'].isin(score_table.index)  
+    boolean_table = df_raw[boolean] 
+     
+    fwd_data = boolean_table[boolean_table['Date']> date] 
+     
+    # 수익률 
+    fwd_return = fwd_data.set_index(['종목코드', 'Date']).groupby('종목코드')['수정종가'].apply(lambda x: np.log(x / x.shift(1))) 
+     
+    # 누적수익률 
+    fwd_cumprod = fwd_return.groupby('종목코드').apply(lambda x: np.exp(x).cumsum()) 
+    fwd_cumprod = fwd_cumprod.rename("누적수익률").reset_index() 
+    fwd_cumprod = fwd_cumprod.pivot(index= '종목코드', columns= 'Date', values='누적수익률')   
+     
+    grade_cumprod_combined = pd.concat([df_grade_data, fwd_cumprod], axis= 1) 
+    ''' 
+     
+     
+def make_score_matrix(df_info, df_main, date):   
+    group_list = ['Profit', 'Stability', 'Growth']   
+    # group_list = ['Valuation', 'Profit', 'Growth', 'Stability']   
+
+    # target_group_list = ['시가총액_Q그룹']   
+    target_group_list = ['산업명', '시가총액_Q그룹']   
+    df_matrix = pd.DataFrame()   
+    stability_group_data = pd.DataFrame() 
+    profit_group_data = pd.DataFrame() 
+    for group_name in group_list:   
+        # group_name = group_list[1]   
+        group_columns = df_master[(df_master['Mid'] == group_name)].index.tolist()   
+        group_sort = df_master[(df_master['Mid'] == group_name)]['정렬'].tolist()   
+        dict_columns = dict(zip(group_columns, group_sort))   
+        df_group_data = pd.DataFrame()   
+        df_grade_data = pd.DataFrame()   
+        for column, sort in dict_columns.items():   
+            df_group_data = pd.concat([df_group_data, df_info[[column]]], axis=1)   
+            df_item_data = pd.DataFrame()   
+            df_item_data = pd.concat([df_item_data, df_info[[column]]], axis=1)   
+            for target_group in target_group_list:   
+                # target_group = target_group_list[0]   
+                df_data = get_group_data(df_info, column, target_group, sort)   
+                # pd.merge(df_main, df_data, left_index=True, right_index=True, how='inner').to_csv(   
+                #     "./output/" + date + "_" + group_name + "_" + column + '_' + target_group + "_data.csv",   
+                #     encoding='euc-kr')   
+                df_item_data = pd.concat([df_item_data, df_data], axis=1)   
+                if (group_name == 'Profit') : 
+                    profit_group_data[column + '_' + target_group + '_백분율'] = pd.concat([profit_group_data, df_item_data[column + '_' + target_group + '_백분율']], axis=1)[column + '_' + target_group + '_백분율'] 
+                elif (group_name == 'Stability') : 
+                    stability_group_data[column + '_' + target_group + '_백분율'] = pd.concat([stability_group_data, df_item_data[column + '_' + target_group + '_백분율']], axis=1)[column + '_' + target_group + '_백분율'] 
+                else : 
+                    pass 
+            df_item_data = df_item_data.loc[:, ~df_item_data.columns.duplicated()]   
+            df_item_data = make_grade(df_item_data, column, sort)   
+            pd.merge(df_main, df_item_data, left_index=True, right_index=True, how='inner')  
+            ''' .to_csv(   
+                "./output/" + pd.to_datetime(str(date)).strftime("%y%m%d") + "_" + group_name + "_" + column + "_data.csv", encoding= 'euc-kr') '''  
+            column_name = column + "_점수"   
+            df_grade_data = pd.concat([df_grade_data, df_item_data[column_name]], axis=1)   
+            df_group_data = pd.concat([df_group_data, df_grade_data], axis=1)   
+        column_name = group_name + "_점수"   
+        df_grade_data[column_name] = df_grade_data.mean(axis=1)   
+        pd.merge(df_main, df_grade_data, left_index=True, right_index=True, how='inner') 
+        '''.to_csv(   
+            "./output/" + pd.to_datetime(str(date)).strftime("%y%m%d") + "_" + group_name + "_점수.csv", encoding= 'euc-kr') ''' 
+        # df_matrix = pd.concat([df_matrix, df_grade_data[column_name]], axis= 1) 
+         
+        ''' 
+        if group_name == 'Profit': 
+            get_mdd(df, profit_group_data, 180).savefig(pd.to_datetime(str(date)).strftime("%y%m%d") + '_Growth.png') 
+        #elif group_name == 'Stability': 
+        #   df_delisting_data, quantile_table = delisting_probability(delisting, stability_group_data, 24, 5) 
+        else: 
+            pass 
+        ''' 
+         
+    df_matrix = pd.concat([df_matrix, profit_group_data.fillna(1).mean(axis=1), stability_group_data.mean(axis=1)], axis=1 ) 
+    df_matrix['종합점수'] = df_matrix.mean(axis= 1)  
+     
+    return_table = finding_well_done(df_matrix).savefig(pd.to_datetime(str(date)).strftime("%y%m%d") + '_Return.png') 
+     
+    pd.merge(df_main, df_matrix, left_index=True, right_index=True, how='inner').to_csv(   
+        "./output/" + pd.to_datetime(str(date)).strftime("%y%m%d") + "_" + "Grade.csv", encoding='euc-kr') 
+
+    return df_matrix, df_delisting_data, quantile_table 
+
+     
+
+def finding_well_done(df_matrix): 
+    a = pd.qcut(df_matrix['종합점수'], 5 , labels=np.arange(5, 0, -1)) # 숫자가 크면 좋은거  
+     
+    df_raw = df_price.copy() 
+    b = df_raw[df_raw.index.get_level_values(0).isin(df_matrix.index)] 
+     
+    fwd_data = b[b.index.get_level_values(1) >= pd.to_datetime(date) + pd.DateOffset(months= 3)] 
+    fwd_return = fwd_data.groupby('Symbol')['value'].apply(lambda x: np.log(x / x.shift(1))) 
+    fwd_cumprod = fwd_return.groupby('Symbol').apply(lambda x: np.exp(x.cumsum())).reset_index() 
+    fwd_cumprod = fwd_cumprod.merge(pd.DataFrame(a), left_on = 'Symbol', right_index = True, how = 'inner') 
+     
+    t_fwds = [3, 6, 12, 18] 
+    fwd_table = pd.DataFrame() 
+    for t_fwd in t_fwds: 
+        return_rate = fwd_cumprod[fwd_cumprod['Date'] == pd.to_datetime(date) + pd.DateOffset(months= t_fwd)] 
+        fwd_table = fwd_table.append(return_rate) 
+    fwd_table = fwd_table.groupby(["Date","종합점수"]).mean() 
+    mean_fwd_table = fwd_table.reset_index().pivot(index= "종합점수", columns= "Date", values= 'value') 
+    # fwd_table.columns = pd.to_datetime(fwd_table.columns).strftime("%y%m%d")  
+     
+    fig, ax = plt.subplots(figsize=(10,5)) 
+    sns.heatmap(mean_fwd_table , cmap= 'RdBu_r', annot= True, fmt= ".3")     
+     
+    ''' 
+    a = df_matrix[(df_matrix['Stability_점수'].rank(pct=True) >= .5) &  
+                  (df_matrix['Profit_점수'].rank(pct=True) >= .6) &  
+                  (df_matrix['Growth_점수'].rank(pct=True) >= .9)] 
+
+    df_raw = df_price.copy() 
+    b = df_raw[df_raw.index.get_level_values(0).isin(a.index)] 
+     
+    fwd_data = b[b.index.get_level_values(1) > pd.to_datetime(date) + pd.DateOffset(months= 3)] 
+    fwd_return = fwd_data.groupby('Symbol')['value'].apply(lambda x: np.log(x / x.shift(1))) 
+    fwd_cumprod = fwd_return.groupby('Symbol').apply(lambda x: np.exp(x.cumsum())).reset_index() 
+     
+    t_fwds = [6, 9, 15, 21, 27] 
+    fwd_table = pd.DataFrame() 
+    for t_fwd in t_fwds: 
+        return_rate = fwd_cumprod[fwd_cumprod['Date'] == pd.to_datetime(date) + pd.DateOffset(months= t_fwd)] 
+        fwd_table = fwd_table.append(return_rate) 
+    fwd_table = fwd_table.pivot(index= 'Symbol', columns= 'Date', values='value') 
+    fwd_table.columns = pd.to_datetime(fwd_table.columns).strftime("%y%m%d") 
+     
+    mean_fwd_table = pd.DataFrame(fwd_table.mean(), columns=['Return']).T 
+     
+     
+    fig, ax = plt.subplots(figsize=(10,5)) 
+    sns.heatmap(mean_fwd_table , cmap= 'RdBu_r', annot= True, fmt= ".3")     
+    ''' 
+    return fig 
+
+     
+if __name__ == "__main__":   
+    quantile_count = 10   
+
+    file_name = "장기스코어_검증용_20200722"   
+     
+    df, df_master, delisting = get_master_from_file(file_name, 2015, 2019) 
+     
+    file_name_2 = "수정주가" 
+    df_price = pd.read_excel("./" + file_name_2 + ".xlsx", encoding= 'euc-kr', header=[8]) 
+    df_price = df_price.drop(columns = ["Symbol Name", 'Kind', 'Item', 'Item Name ', 'Frequency']) 
+    df_price = df_price.melt(id_vars= ['Symbol']) 
+    df_price.rename(columns= {"variable":"Date"}, inplace= True) 
+    df_price = df_price.set_index(["Symbol",'Date']) 
+     
+    file_name_3 = "KSP_price" 
+    ksp_price = pd.read_excel("./" + file_name_3 + ".xlsx", encoding= 'euc-kr',header = [9]) 
+    ksp_price = ksp_price.iloc[4:].set_index("Symbol Name") 
+     
+    df = preprocessing_data(df, df_master)   
+
+    delisting_count2 = pd.DataFrame() 
+    delisting_count = pd.DataFrame() 
+    date_list = df['Date'].unique()   
+    for date in date_list:   
+        # date = date_list[-1]   
+        df_info = df[df['Date'] == date]  
+        df_info = pd.merge(df_info, get_quantile(df_info, "시가총액", quantile_count), left_index=True, right_index=True, how='inner')   
+        df_main = df_info[['종목코드', '종목명', '산업명', '시가총액_Q그룹']].set_index('종목코드')   
+        df_info = df_info.set_index("종목코드")   
+        df_matrix, df_delisting_data, quantile_table =  make_score_matrix(df_info, df_main, np.datetime_as_string(date, unit='D')) 
+         
+        delisting_count2 = pd.concat([delisting_count2, quantile_table], axis= 1) 
+        delisting_count = pd.concat([delisting_count, df_delisting_data], axis= 1) 
+     
+    delisting_cum = delisting_count2.iloc[:-1,].cumsum().ffill().fillna(0).T 
+   
+    fig, ax3 = plt.subplots(figsize=(10,5)) 
+    colorarr = plt.cm.get_cmap('RdBu', len(delisting_cum.columns)) 
+    # fig.set_canvas(plt.gcf().canvas)   
+
+    #delisting_cum.plot(cmap= 'RdBu', ax = ax3) 
+     
+    i_cnt = 0    
+    for each in delisting_cum.columns :    
+        temp_color = colorarr(i_cnt/len(delisting_cum.columns))    
+         
+        ax3.fill_between(x= delisting_cum.index, y1= delisting_cum[each] , alpha=.2, color = temp_color)  
+        ax3.plot(delisting_cum[each], color = temp_color, alpha= 1, label = each) 
+        ''' 
+        for x,y in zip(delisting_cum.index, delisting_cum[each]): 
+            label = "{:.0f}".format(y) 
+             
+            plt.annotate(label, 
+                         (x,y), 
+                         textcoords = "offset points", 
+                         xytext= (0,10), 
+                         ha= "center") 
+        ''' 
+        i_cnt += 1    
+    plt.legend(loc = 1) 
+    fig.tight_layout() 
+
+         
+    fig, ax1 = plt.subplots(figsize=(10,5)) 
+    fig.set_canvas(plt.gcf().canvas) 
+    ax2 = ax1.twinx() 
+     
+    # Plot with properties 
+    line1 = ax1.plot(delisting_count.iloc[2], color= 'red', marker='*', alpha= .8, label= "안정성_상위10%") 
+    line2 = ax1.plot(delisting_count.iloc[5], color= 'blue' , marker='*', alpha= .8, label='안정성_하위10%') 
+    line3 = ax1.plot(delisting_count.iloc[6], color= 'black' , marker='*', alpha= .8, label='상장폐지 종목수') 
+     
+    lines = line1 + line2 + line3 
+    labels = [l.get_label() for l in lines] 
+    plt.legend(lines, labels, loc=1) 
+
+    ax1.fill_between(delisting_count.columns, delisting_count.iloc[2], alpha=.1, color='red') 
+    ax1.fill_between(delisting_count.columns, delisting_count.iloc[5], alpha=.1, color='blue') 
+    ax2.fill_between(delisting_count.columns, delisting_count.iloc[6], alpha=.1, color='black') 
+     
+    for x,y in zip(delisting_count.columns, delisting_count.iloc[2]): 
+        label = "{:.0f}".format(y) 
+         
+        plt.annotate(label, 
+                     (x,y), 
+                     textcoords = "offset points", 
+                     xytext= (0,10), 
+                     ha= "center") 
+    for x,y in zip(delisting_count.columns, delisting_count.iloc[5]): 
+        label = "{:.0f}".format(y) 
+         
+        plt.annotate(label, 
+                     (x,y), 
+                     textcoords = "offset points", 
+                     xytext= (0,10), 
+                     ha= "center") 
+     
+    for x,y in zip(delisting_count.columns, delisting_count.iloc[6]): 
+        label = "{:.0f}".format(y) 
+         
+        plt.annotate(label, 
+                     (x,y), 
+                     textcoords = "offset points", 
+                     xytext= (0,10), 
+                     ha= "center")     
+     
+    fig.tight_layout() 
+     
+     
+
+
+
+def make_score_matrix(df_info, df_main, date):   
+    group_list = ['Profit', 'Stability', 'Growth']   
+    # group_list = ['Valuation', 'Profit', 'Growth', 'Stability']   
+
+    # target_group_list = ['시가총액_Q그룹']   
+    target_group_list = ['산업명', '시가총액_Q그룹']   
+    df_matrix = pd.DataFrame()   
+    stability_group_data = pd.DataFrame() 
+    profit_group_data = pd.DataFrame() 
+    for group_name in group_list:   
+        # group_name = group_list[1]   
+        group_columns = df_master[(df_master['Mid'] == group_name)].index.tolist()   
+        group_sort = df_master[(df_master['Mid'] == group_name)]['정렬'].tolist()   
+        dict_columns = dict(zip(group_columns, group_sort))   
+        df_group_data = pd.DataFrame()   
+        df_grade_data = pd.DataFrame()   
+        for column, sort in dict_columns.items():   
+            df_group_data = pd.concat([df_group_data, df_info[[column]]], axis=1)   
+            df_item_data = pd.DataFrame()   
+            df_item_data = pd.concat([df_item_data, df_info[[column]]], axis=1)   
+            for target_group in target_group_list:   
+                # target_group = target_group_list[0]   
+                df_data = get_group_data(df_info, column, target_group, sort)   
+                # pd.merge(df_main, df_data, left_index=True, right_index=True, how='inner').to_csv(   
+                #     "./output/" + date + "_" + group_name + "_" + column + '_' + target_group + "_data.csv",   
+                #     encoding='euc-kr')   
+                df_item_data = pd.concat([df_item_data, df_data], axis=1)   
+                if (group_name == 'Profit') : 
+                    profit_group_data[column + '_' + target_group + '_백분율'] = pd.concat([profit_group_data, df_item_data[column + '_' + target_group + '_백분율']], axis=1)[column + '_' + target_group + '_백분율'] 
+                elif (group_name == 'Stability') : 
+                    stability_group_data[column + '_' + target_group + '_백분율'] = pd.concat([stability_group_data, df_item_data[column + '_' + target_group + '_백분율']], axis=1)[column + '_' + target_group + '_백분율'] 
+                else : 
+                    pass 
+            df_item_data = df_item_data.loc[:, ~df_item_data.columns.duplicated()]   
+            df_item_data = make_grade(df_item_data, column, sort)   
+            pd.merge(df_main, df_item_data, left_index=True, right_index=True, how='inner')  
+            ''' .to_csv(   
+                "./output/" + pd.to_datetime(str(date)).strftime("%y%m%d") + "_" + group_name + "_" + column + "_data.csv", encoding= 'euc-kr') '''  
+            column_name = column + "_점수"   
+            df_grade_data = pd.concat([df_grade_data, df_item_data[column_name]], axis=1)   
+            df_group_data = pd.concat([df_group_data, df_grade_data], axis=1)   
+        column_name = group_name + "_점수"   
+        df_grade_data[column_name] = df_grade_data.mean(axis=1)   
+        pd.merge(df_main, df_grade_data, left_index=True, right_index=True, how='inner') 
+        '''.to_csv(   
+            "./output/" + pd.to_datetime(str(date)).strftime("%y%m%d") + "_" + group_name + "_점수.csv", encoding= 'euc-kr') ''' 
+        df_matrix = pd.concat([df_matrix, df_grade_data[column_name]], axis= 1) 
+        ''' 
+        if group_name == 'Profit': 
+            get_mdd(df, profit_group_data, 180).savefig(pd.to_datetime(str(date)).strftime("%y%m%d") + '_Growth.png') 
+        #elif group_name == 'Stability': 
+        #   df_delisting_data, quantile_table = delisting_probability(delisting, stability_group_data, 24, 5) 
+        else: 
+            pass 
+        ''' 
+    df_matrix['종합점수'] = df_matrix.mean(axis= 1)  
+     
+    # return_table = finding_well_done(.5, .6, .9).savefig(pd.to_datetime(str(date)).strftime("%y%m%d") + '_Return.png') 
+     
+    pd.merge(df_main, df_matrix*25, left_index=True, right_index=True, how='inner').to_csv(   
+        "./output/" + pd.to_datetime(str(date)).strftime("%y%m%d") + "_" + "Grade.csv", encoding='euc-kr') 
+
+    return df_matrix, df_delisting_data, quantile_table  
