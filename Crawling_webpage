@@ -1,0 +1,133 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Jun 17 14:19:19 2020
+
+@author: NHWM
+"""
+
+# Dart + CompanyGuide 크롤링하기 (업로드한 종록 리스트를 가지고 크롤링해서 경쟁사 목록 가져오기)
+
+from urllib.request import urlopen
+import urllib.parse
+import pandas as pd
+from bs4 import BeautifulSoup
+import webbrowser
+from tqdm import tqdm
+import numpy as np
+
+
+baseUrl = 'https://search.naver.com/search.naver?where=post&sm=tab_jum&query='
+'''
+Urlkey = 'algrthSn=35&startDate=20170601&endDate=20170610'
+url = baseUrl + Urlkey
+'''
+plusUrl = input('검색어를 입력하세요')
+
+
+url = baseUrl + urllib.parse.quote_plus(plusUrl)
+
+urllib.request.urlopen(url)
+
+html = urllib.request.urlopen(url).read()
+
+soup = BeautifulSoup(html, 'html.parser')
+
+title = soup.find_all(class_='sh_blog_title')
+
+for i in title:
+    print(i.attrs['title'])
+    print(i.attrs['href'])
+    print()
+
+'''
+api_key = "46f2e8ca8b0806b5a1b1830d8cd044d0998337fc"
+company_code = "014680"
+'''
+dataframe = pd.read_excel("C:/Users/NHWM/Desktop/데이터가이드 주식스코어링/난파된돛단배/Industry_Price_20200617.xlsx",
+                    header = [5], thousands = ',')
+dataframe = dataframe[:3]
+def crawling(dataframe):
+    competitors = pd.DataFrame()
+    col_num = 0
+    for symbol in tqdm(dataframe['Symbol']):
+        url = "http://comp.fnguide.com/SVO2/ASP/SVD_Comparison.asp?pGB=5&gicode="+symbol+"&cID=12&MenuYn=N&ReportGB=&NewMenuID=106&stkGb=701&cpGb=D"
+        resultXML = urlopen(url)
+        result = resultXML.read()
+        xmlsoup = BeautifulSoup(result, 'html.parser')
+    
+        # "th_b"  / "txt_ell" / "clf" / "cle txt_ell"
+        contents = xmlsoup.find_all(class_ = "txt_ell")
+    
+        tmp = list()
+        
+        for i in contents:
+           tmp.append(i.attrs['title'])
+           tmp = list(set(tmp))
+           temp = pd.Series(tmp)
+        competitors = pd.concat([competitors, temp], axis=1)
+        competitors.rename(columns={competitors.columns[col_num]: symbol}, inplace= True)
+        col_num += 1
+
+
+# Crawling RA Testbed
+baseurl = "https://www.ratestbed.kr:7443/portal/pblntf/listProgrsInfo2.do?menuNo=200006"
+resultXML = urlopen(baseurl)        
+result = resultXML.read()
+xmlsoup = BeautifulSoup(result, 'html.parser')
+
+dictionary = {
+    'acnut_name' : '알고리즘명[계좌별명]',
+    'stockm' : '주식 포함 운용 여부',
+    'name2' : '업체명',
+    'opterm_box' : '운용기간',
+
+    'tar profit1w profit_grp' : '1주 수익률',
+    'tar profit1m profit_grp' : '1달 수익률',
+    'tar profit3m profit_grp hide' : '3달 수익률',
+    'tar profit6m profit_grp hide': '6달 수익률',
+    'tar profit1y profit_grp hide' : '1년 수익률',
+    'tar profityc' : '연환산 수익률',
+    'tar profit' : '적수익률',
+    'tar stdev' : '표준편차',
+    'tar sharpe' : '샤프지수',
+    'tar maxdd' : '최대손실률',
+    'tar reward' : '보상 비율',
+    'tar active anal_grp' : '자산 위험도',
+    'tar diff anal_grp' : '유형 차별성'}
+    #'maxasset prodse15' : '종목 편중률'}
+
+dictionary.items()
+next(iter(dictionary.keys())) # acnut_name
+cols = list(dictionary.values()) # 알고리즘명[계좌별명]
+
+competitors = pd.DataFrame()
+names = ['acnut_name', 'stockm', 'name2', 'opterm_box']
+information = ['tar profit1w profit_grp','tar profit1m profit_grp',
+               'tar profit3m profit_grp hide', 'tar profit6m profit_grp hide',
+               'tar profit1y profit_grp hide', 'tar profityc','tar profit',
+               'tar stdev', 'tar sharpe', 'tar maxdd', 'tar reward', 'tar active anal_grp',
+               'tar diff anal_grp']
+
+for name in names:
+    contents = xmlsoup.find_all(class_= name)
+    
+    tmp = list()
+    
+    for i in contents:
+        tmp.append(i.attrs['title'])
+        temp = pd.Series(tmp)
+    competitors = pd.concat([competitors, temp], axis = 1)
+    
+for info in information:
+    contents = xmlsoup.find_all(class_= info)
+
+    tmp = list()
+    
+    for i in contents:
+        tmp.append(i.text)
+        temp = pd.Series(tmp)
+    competitors = pd.concat([competitors, temp], axis= 1)
+
+competitors.columns = cols
+competitors.to_csv("C:/Users/NHWM/Desktop/코딩모음/로보테스트수익률_20200727/로보테스트수익률_"  + datetime.today().strftime("%Y%m%d") + ".csv", encoding= 'euc-kr')
+ 
