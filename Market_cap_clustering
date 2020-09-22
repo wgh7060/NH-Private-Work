@@ -1,0 +1,99 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Feb 11 14:03:56 2020
+
+@author: NHWM
+"""
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.cluster import KMeans
+
+# 한국어 나오게 하는법
+from matplotlib import font_manager, rc 
+font_name = font_manager.FontProperties(fname="c:/Windows/Fonts/malgun.ttf").get_name() 
+
+rc('font', family=font_name)
+
+df = pd.read_excel("C:/Users/NHWM/Desktop/데이터가이드 주식스코어링/시가총액 나열.xlsx", sheet_name = "온리_시총2")
+df.set_index(df.Date, inplace = True)
+df_rank = df.rank(axis = 1, na_option = 'keep', ascending = False)
+
+# 시총 상위 00위 이내만 셀렉트
+temp = df_rank[df_rank.index == '2020-02-10'] <= 50
+t2 = temp.values
+
+t3 = df_rank.columns[t2.flatten()] # array의 bracket을 제거해 버린다
+df_rank = df_rank[list(t3)]
+
+# df_rank[df_rank.std() > 1]
+
+df_rank.index = pd.to_datetime(df_rank.index, format= '%Y%m%d')
+df_week = df_rank.resample('W').mean()
+df_month = df_rank.resample('M').mean()
+df_end_month = df_rank.groupby([df_rank.index.year, df_rank.index.month]).tail(1)
+df_daily_20 = df_rank.tail(20)
+
+
+# 19년 2월 10일과 20년 2월 10일을빼서 큰놈들은 상승한거니 빨간색, 그 외는 파란색으로 정렬을하는거
+df_week_dif = ((df_week.ix[0] - df_week.ix[-1]) / df_week.ix[1]).rank(axis= 0, na_option='keep', ascending= False)
+df_month_dif = ((df_month.ix[0] - df_month.ix[-1]) / df_month.ix[1]).rank(axis= 0, na_option='keep', ascending= False)
+
+sort_week = df_week_dif.sort_values()
+sort_month = df_month_dif.sort_values()
+
+df_daily = df_daily_20.reindex(df_daily_20.ix[-1].sort_values().index, axis = 1)
+df_week_2 = df_week.reindex(sort_week.index, axis= 1)
+df_month_2 = df_month.reindex(sort_month.index, axis= 1)
+df_end_month_ranked = df_end_month.reindex(df_end_month.ix[-1].sort_values().index, axis = 1) 
+
+'''
+t1= pd.Index(['A000070', 'A000080', 'A000100', 'A000120'])
+t1[np.array([True, False,True,False])]
+'''
+
+# Line Charts
+fig, ax = plt.subplots(figsize=(15,9))
+plt.gca().invert_yaxis()
+# df_week_2.plot(colormap = 'RdBu', ax = ax)
+df_end_month_ranked.plot(colormap = 'RdBu', ax = ax)
+
+# KKAK DDO KI
+df_end_month_ranked.index = df_end_month_ranked.index.year.astype(str) + '_' + df_end_month_ranked.index.month.astype(str)
+fig, ax = plt.subplots(figsize=(15,9))
+sns.heatmap(df_end_month_ranked[['LG화학','POSCO']].T, cmap= 'RdBu', annot = True)
+plt.xticks(rotation= 45)
+
+# KKAK DDO KI
+df_daily.index = df_daily.index.year.astype(str) + '_' + df_daily.index.month.astype(str)
+fig, ax = plt.subplots(figsize=(15,9))
+sns.heatmap(df_daily.T, cmap= 'RdBu', annot = True)
+plt.xticks(rotation= 45)
+
+# K-means Clustering
+# 누적 증가율로 클러스터링
+
+df_ms_dif = df_rank.resample('W').mean()
+# df_ms_dif = df_rank.tail(20)
+
+df_diff = np.log(df_ms_dif / df_ms_dif.shift(1))
+df_diff = np.exp(df_diff.cumsum())
+
+tmp = df_diff.ix[1:,:-1].T
+
+kmeans = KMeans(n_clusters = 7)
+kmeans = kmeans.fit(tmp)
+labels = kmeans.predict(tmp)
+
+labels_color = pd.Series(labels).replace({0:'orange', 1:'blue', 2:'cyan', 3:'green', 4:'black', 5:'pink', 6:'purple'})
+# labels_color = pd.Series(labels).to_rgba()
+
+fig, ax = plt.subplots(figsize=(15,9))
+tmp.T.plot(color = labels_color, alpha = .5, ax =ax)
+ax.get_legend().remove()
+
+color = pd.DataFrame(tmp.index, list(labels_color))  
+color.groupby([color.index]).count()
+final_result = color.sort_index()
