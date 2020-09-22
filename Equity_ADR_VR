@@ -1,0 +1,119 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Jun 12 10:52:39 2020
+
+@author: NHWM
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+from fredapi import Fred
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LinearRegression
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+import talib as ta
+import datetime
+import seaborn as sns
+
+# 한국어 나오게 하는법
+from matplotlib import font_manager, rc 
+font_name = font_manager.FontProperties(fname="c:/Windows/Fonts/malgun.ttf").get_name() 
+rc('font', family = font_name)
+
+df = pd.read_excel('C:/Users/NHWM/Desktop/데이터가이드 주식스코어링/난파된돛단배/VR_ADR_20200612.xlsx' , 
+                   header=[8,12,13],
+                   thousands = ',')
+file_1 = pd.read_excel('C:/Users/NHWM/Desktop/데이터가이드 주식스코어링/난파된돛단배/Index_Price_20200616.xlsx' , 
+                   header=[9,13],
+                   thousands = ',')
+file_2 = pd.read_excel('C:/Users/NHWM/Desktop/데이터가이드 주식스코어링/난파된돛단배/Industry_Price_20200617.xlsx' , 
+                   header=[9,13],
+                   thousands = ',')
+index = file_1.copy()
+index.set_index(index.columns[0], inplace = True)
+index.columns = index.columns.get_level_values(0)
+index.index.name = 'Date' # 주말 제거하기
+index = index.reset_index()[index.reset_index()['Date'].dt.dayofweek < 5].set_index('Date')
+index_return = np.log(index / index.shift(20)) 
+
+industry = file_2.copy()
+industry.set_index(industry.columns[0], inplace = True)
+industry.columns = industry.columns.get_level_values(0)
+industry.index.name = 'Date' # 주말 제거하기
+industry = industry.reset_index()[industry.reset_index()['Date'].dt.dayofweek < 5].set_index('Date')
+industry_return = np.log(industry/ industry.shift(20)) 
+
+df.set_index(df.columns[0], inplace = True)
+
+fng_factor = df.copy()    
+fng_factor.index.name = 'Date' 
+# melt (stack) 
+fng_factor = fng_factor.reset_index().melt(id_vars = ['Date']) 
+fng_factor = fng_factor.loc[~fng_factor['value'].isna()] 
+ 
+del fng_factor['variable_2']
+
+
+
+fng_factor = fng_factor[fng_factor['Date'].dt.dayofweek < 5] # 주말 제거하기
+df_factor = fng_factor.set_index(['variable_0','Date','variable_1']).unstack(level = 'variable_1').reset_index().set_index(['Date', 'variable_0']) 
+
+# flatten multi-index 
+df_factor.columns = df_factor.columns.get_level_values(0).str.replace('value','') + df_factor.columns.get_level_values(1) 
+df_factor.index.names = ['Date','Symbol']
+
+# Advance - Decline Ratio (ADR): 국내에서는 주로 20거래일 동안의 상승 종목 수를 하락 종목 수로 나눈 값을 사용한다.
+test = df_factor.groupby('Symbol')['수정주가(원)'].shift(0) / df_factor.groupby('Symbol')['수정주가(원)'].shift(1)
+test = test.to_frame()
+
+test['Signal'] = np.sign(test['수정주가(원)'] - 1)       
+counter = test.groupby(['Date','Signal']).count()
+down = counter.groupby('Date').first() # 전일 종가대비 하락한 애들
+up = counter.groupby('Date').last() # 전일 종가대비  상승한 애들
+adr = up.rolling(20).sum() / down.rolling(20).sum() * 100 
+adr.rename(columns={'수정주가(원)' : 'ADR'}, inplace= True)
+
+
+fig, axes = plt.subplots(nrows= len(industry_return.columns), ncols =1 , figsize = [8,12])
+i_cnt = 0
+for i in industry_return.columns :
+    
+    axes[i_cnt].plot(industry_return[i])
+    axes[i_cnt].fill_between(x = industry_return.index, y1 = [0], y2 = industry_return[i], color = 'blue', alpha = .3)
+    ax_twin_tmp = axes[i_cnt].twinx()
+    ax_twin_tmp.plot(adr, color = 'red')
+    ax_twin_tmp.fill_between(x = adr.index, y1 = [100], y2 = adr['ADR'], color = 'red', alpha = .3)
+    
+    axes[i_cnt].set_xlabel('Date', fontsize = 14)
+    axes[i_cnt].set_ylabel(i,fontsize = 14)
+    ax_twin_tmp.set_ylabel('ADR',fontsize = 14)
+    
+    i_cnt += 1
+    
+plt.tight_layout()
+
+
+fig, axes = plt.subplots(figsize = [10,8])
+axes.plot(industry_return, alpha = .3)
+ax_twin_tmp = axes.twinx()
+ax_twin_tmp.plot(adr, color = 'red')
+
+
+corr = adr.merge(index['코스피'], how='left',on='Date')
+corr = corr.merge(index_return['코스피'], how='left', on='Date')
+plt.figure(figsize=(8,8))
+sns.heatmap(data = corr.corr() , annot= True, fmt ='.2f', linewidths = .5, cmap = 'RdBu')
+
+# 결론: ADR을 이용해서는 현재 시장이 심체/과열/확산 단계 정도를 평가할 수 있는 의미를 제공
+
+
+# On Balance Volume
+ta.OBV(df_factor[df_factor.Symbol == 'A000020']['수정주가(원)'], df_factor[df_factor.Symbol == 'A000020']['거래량(주)'])
+
+
+
+
+
+
+    
