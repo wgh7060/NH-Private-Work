@@ -1,0 +1,389 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Sep 15 19:35:28 2020
+
+@author: NHWM
+"""
+
+import pandas as pd   
+import numpy as np   
+import socket   
+import logging   
+from datetime import datetime   
+from dateutil import parser   
+import math   
+from dateutil.relativedelta import relativedelta   
+import os   
+import matplotlib.pyplot as plt   
+from matplotlib.gridspec import GridSpec   
+import pathlib   
+import time   
+import seaborn as sns   
+from 한양대_백테스팅코드_20200907 import *
+from matplotlib import font_manager, rc, rcParams   
+font_name = font_manager.FontProperties(fname="c:/Windows/Fonts/malgun.ttf").get_name()   
+rc('font', family=font_name)   
+rcParams['axes.unicode_minus'] = False   
+
+# year_begin = 2014 / year_end = 2019
+def get_master_from_file(file_name, year_begin, year_end):   
+    df_master = pd.read_excel("C:/Users/NHWM/Desktop/해외주식_제로인/" + file_name + ".xlsx", encoding='euc-kr', sheet_name= '스코어테이블')   
+    df_master = df_master[df_master['구분'] == '대표']   
+    df_master.loc[(df_master['정렬'] == '내림'), '정렬'] = False   
+    df_master.loc[(df_master['정렬'] == '오름'), '정렬'] = True   
+    df_master = df_master.set_index("아이템명")   
+
+    df_NH = pd.read_excel("C:/Users/NHWM/Desktop/해외주식_제로인/" + file_name + ".xlsx", encoding='euc-kr', sheet_name='데이터프레임', header=[8], thousands=",")   
+    df_NH.drop(columns = ['Kind', 'Frequency', 'Item'], inplace = True)
+    df_NH = df_NH.melt(id_vars=['Symbol', 'Symbol Name', 'Item Name '])   
+    df_NH = df_NH.set_index(['variable', 'Symbol', 'Symbol Name', 'Item Name ']).unstack(level='Item Name ')   
+    df_NH.columns = df_NH.columns.get_level_values(1)   
+
+    df_NH['유동비율_1YR'] = (df_NH['유동자산(천원)'] / df_NH['유동부채(천원)']) * 100   
+    df_NH['현금비율_1YR'] = (df_NH['현금및현금성자산(천원)'] / df_NH['유동부채(천원)']) * 100   
+    df_NH['수정주가(원)'] = df_NH['수정주가(원)'].astype(float)  
+      
+    cols = df_NH.reset_index().columns   
+    cols[~cols.isin(df_master['FnGuide 아이템명'])]   
+
+    df_factor = df_NH.reset_index().rename(columns={'variable': 'Date', "Symbol Name": "Name"})   
+    df_factor.rename(columns = dict(zip(df_master['FnGuide 아이템명'], df_master.index)), inplace=True)   
+     
+    # 스팩주들 제거   
+    remove = [name for name in df_factor["종목명"] if "스팩" in name]   
+    df_bool = df_factor["종목명"].isin(remove)   
+    df_factor = df_factor[df_bool != True]   
+
+    # 백테스팅 진행할 연도 설정   
+    df_factor = df_factor[(year_begin <= df_factor['Date'].dt.year) & (df_factor['Date'].dt.year <= year_end)]   
+     
+    # 필터링   
+    df_factor = df_factor[~df_factor['산업명'].isna()]   
+    df_factor = df_factor[~df_factor['상장주식'].isna()]  
+     
+    # 우선주 제거   
+    df_factor = df_factor[df_factor['종목코드'].str[-1:] == '0']   
+    
+    # ffill
+    df_factor.groupby('종목코드').ffill(limit = 3)
+    
+    return df_factor, df_master  
+
+# df_info = df / target_column= "시가총액" / quantile_count = 10 / 1등이 순위가 높은것임   
+def get_quantile(df_info, target_column, quantile_count):   
+    df_temp = pd.DataFrame() 
+    df_temp[target_column + "_Q그룹"] = pd.qcut(df_info[target_column], q=quantile_count, labels=np.arange(quantile_count, 0, -1))   
+    return df_temp    
+
+# 개별 종목의 +1 / -1 을 부과할 때 사용하는 전처리  
+def preprocessing_data(df, df_master):   
+    df_tmp = df.copy()
+    for val_col in df_master[df_master['Mid'] == 'Valuation'].index:   
+        df_tmp.loc[(df_tmp[val_col] < 0), val_col] = np.nan   
+        
+    for val_col in df_master[df_master['Mid'] == 'Profit'].index:   
+        df_tmp.loc[(df_tmp[val_col] == '완전잠식'), val_col] = -100   
+        
+    for val_col in df_master[df_master['Mid'] == 'Growth'].index:   
+        items = ['흑전', 'N/A(IFRS)', '당기잠식', '전기잠식'] 
+        items_2 = ['적지','적전','잠식지속','완전잠식'] 
+        df_tmp.loc[df_tmp[val_col].isin(items), val_col] = np.nan 
+        df_tmp.loc[df_tmp[val_col].isin(items_2), val_col] = -100 
+        
+    for val_col in df_master[df_master['Mid'] == 'Stability'].index: 
+        items_2 = ['적지', '적전', '잠식지속', '완전잠식'] 
+        df_tmp.loc[df_tmp[val_col].isin(items_2), val_col] = -100   
+    # df_tmp.loc[df_tmp['배당률_1YR'].isnull(), '배당률_1YR'] = 0   
+        
+    return df_tmp   
+
+# df_info = df_info / target_column = '매출액증가율_1YR' / target_group = '산업명' / ascend_order = False   
+def get_group_data(df_info, target_column, target_group, ascend_order):   
+    df_temp = pd.DataFrame()   
+    df_temp[target_column] = df_info[target_column]   
+    nan_group = df_info[df_info[target_column].isnull()]   
+    df_info = df_info.loc[df_info.index.difference(nan_group.index)]   
+    df_info[target_column] = df_info[target_column].astype('float64')   
+    column_name = target_column + "_" + target_group + "_순위"   
+    df_temp[column_name] = df_info.groupby(target_group)[target_column].rank(ascending=ascend_order).astype('int')   
+
+    column_name = target_column + "_" + target_group + "_전체수"   
+    count = df_info.groupby(target_group)[target_column].count()   
+    count = count.rename(column_name)   
+    count = pd.DataFrame(count)   
+    df_temp[column_name] = pd.merge(df_info, count, left_on=target_group, right_index=True, how='inner')[column_name]   
+
+    column_name = target_column + "_" + target_group + "_제외수"   
+    out_count = nan_group.groupby(target_group)[target_column].size()   
+    out_count = out_count.rename(column_name)   
+    out_count = pd.DataFrame(out_count)   
+    df_temp[column_name] = pd.merge(df_info, out_count, left_on=target_group, right_index=True, how='inner')[column_name]    
+
+    summ = df_info.groupby(target_group)["시가총액"].sum()   
+    column_name = target_group + "_시가총액합"   
+    summ = summ.rename(column_name)   
+    summ = pd.DataFrame(summ)   
+    df_info = pd.merge(df_info, summ, left_on=target_group, right_index=True, how='inner')   
+    df_info['weight'] = (df_info['시가총액'] / df_info[column_name])   
+    # df_temp['weight'] = df_info['weight']   
+
+    column_name = target_column + "_" + target_group + "_가중평균"   
+    grouped = df_info.groupby(target_group)   
+    weighted_avg_func = lambda g: np.average(g[target_column], weights=g['weight'])   
+    weight_mean = grouped.apply(weighted_avg_func)   
+    weight_mean = weight_mean.rename(column_name)   
+    weight_mean = pd.DataFrame(weight_mean)   
+    df_temp[column_name] = pd.merge(df_info, weight_mean, left_on=target_group, right_index=True, how='inner')[column_name]   
+
+    column_name = target_column + "_" + target_group + "_백분율"   
+    df_temp[column_name] = df_info.groupby(target_group)[target_column].rank(ascending=ascend_order, pct=True, method='min')   
+
+    column_name = target_column + "_" + target_group + "_점수"   
+    if ascend_order:   
+        grade = df_info.groupby(target_group)[target_column].transform(   
+            lambda x: pd.qcut(x, 4, labels=[4, 3, 2, 1]) if x.count() >= 4 else 1)   
+    else:   
+        grade = df_info.groupby(target_group)[target_column].transform(   
+            lambda x: pd.qcut(x, 4, labels=[4, 3, 2, 1]) if x.count() >= 4 else 1)   
+    grade = grade.astype('category')   
+    grade = grade.cat.add_categories(0)   
+    grade = grade.rename(column_name)   
+    grade = pd.DataFrame(grade)   
+    df_temp[column_name] = pd.merge(df_info, grade, left_index=True, right_index=True, how='inner')[   
+        column_name]   
+    df_temp[column_name] = df_temp[column_name].fillna(0)   
+    # df_temp = df_temp.drop(target_column, axis=1)   
+    return df_temp   
+
+def make_score_matrix(df_info, df_main, date):   
+    group_list = ['Profit', 'Stability', 'Growth']   
+    target_group_list = ['산업명', '시가총액_Q그룹']   
+    df_matrix = pd.DataFrame()   
+    stability_group_data = pd.DataFrame() 
+    profit_group_data = pd.DataFrame()
+    growth_group_data = pd.DataFrame()
+    for group_name in group_list:   
+        group_columns = df_master[(df_master['Mid'] == group_name)].index.tolist()   
+        group_sort = df_master[(df_master['Mid'] == group_name)]['정렬'].tolist()   
+        dict_columns = dict(zip(group_columns, group_sort))   
+        df_group_data = pd.DataFrame()   
+        df_grade_data = pd.DataFrame()   
+        for column, sort in dict_columns.items():   
+            # 해당 팩터의 연결된 아이템 값들을 생성
+            df_group_data = pd.concat([df_group_data, df_info[[column]]], axis=1)    
+            # 팩터 이전의 개별 아이템 값만을 생성
+            df_item_data = pd.DataFrame()   
+            df_item_data = pd.concat([df_item_data, df_info[[column]]], axis=1)   
+            # 산업/동류집단으로 구한 산출값 생성
+            for target_group in target_group_list:   
+                df_data = get_group_data(df_info, column, target_group, sort)   
+                # df_item_data = pd.concat([df_item_data, df_data], axis=1)   
+                if (group_name == 'Profit') : 
+                    profit_group_data[column + '_' + target_group + '_백분율'] = pd.concat([profit_group_data, df_data[column + '_' + target_group + '_백분율']], axis=1)[column + '_' + target_group + '_백분율'] 
+                elif (group_name == 'Stability') : 
+                    stability_group_data[column + '_' + target_group + '_백분율'] = pd.concat([stability_group_data, df_data[column + '_' + target_group + '_백분율']], axis=1)[column + '_' + target_group + '_백분율'] 
+                else : 
+                    growth_group_data[column + '_' + target_group + '_백분율'] = pd.concat([growth_group_data, df_data[column + '_' + target_group + '_백분율']], axis=1)[column + '_' + target_group + '_백분율'] 
+                
+                profit_group_data[target_group + "_Profit_아이템_평균"] = profit_group_data[(col for col in profit_group_data.columns if target_group in col)].mean(axis=1) 
+                growth_group_data[target_group + "_Growth_아이템_평균"] = growth_group_data[(col for col in growth_group_data.columns if target_group in col)].mean(axis=1) 
+                stability_group_data[target_group + "_Stability_아이템_평균"] = stability_group_data[(col for col in stability_group_data.columns if target_group in col)].mean(axis=1) 
+    
+    profit_group_data["Profit_아이템_총평균"] = profit_group_data[(col for col in profit_group_data.columns if "Profit" in col)].mean(axis=1) 
+    stability_group_data["Stability_아이템_총평균"] = stability_group_data[(col for col in stability_group_data.columns if "Stability" in col)].mean(axis=1) 
+    growth_group_data["Growth_아이템_총평균"] = growth_group_data[(col for col in growth_group_data.columns if "Growth" in col)].mean(axis=1)
+    df_final = profit_group_data.merge(growth_group_data, left_index = True, right_index = True).merge(stability_group_data, left_index = True, right_index = True)
+    df_final['종합점수'] = df_final[(col for col in df_final.columns if "총평균" in col)].mean(axis = 1)
+    df_final['Date'] = pd.to_datetime(str(date)).strftime("%y%m%d")
+    df_final_grade = pd.DataFrame()
+    for col in df_final.columns[df_final.columns != 'Date']:
+        df_final_grade[col] = pd.qcut(df_final[col], q = quantile_count, labels = np.arange(quantile_count,0,-1))
+    df_final_grade['Date'] = date
+    # df_final.to_csv("C:/Users/NHWM/Desktop/해외주식_제로인/output/NH검증용/" + pd.to_datetime(str(date)).strftime("%y%m%d") + "_score_table.csv", encoding = "euc-kr") 
+    return df_final, df_final_grade
+
+# dataframe = df_matrix_grade_total / item = 'Stability_아이템_총평균'/ price_dataframe = price_table
+def period_return(dataframe, item, months, price_dataframe):
+    
+    date_list = dataframe["date"].unique()
+    rebalancing_table= pd.DataFrame()
+    df_analysis = pd.DataFrame()
+    rebalanced_list = pd.DataFrame()
+    final_counter_table = pd.DataFrame()
+    
+    for index, period in tqdm(enumerate(date_list)):
+        df_period = dataframe[dataframe['date'] == period] # 해당 회계일의 종목만을 필터링
+        df_period_price = price_dataframe[(price_dataframe['Symbol'].isin(df_period.index)) & (price_dataframe['Date'] >= pd.to_datetime(period))]
+        # 수익률
+        df_period_return = df_period_price.set_index(["Symbol", "Date"]).groupby(["Symbol"])['Price'].apply(lambda x: np.log(x / x.shift(1)))
+        # 누적수익률
+        cum_prod = df_period_return.groupby(["Symbol"]).apply(lambda x: np.exp(x.cumsum()))
+        
+        ret = pd.concat([df_period_return, cum_prod], axis=1)
+        ret.columns = ["Return", "Cumulative"]
+        
+        # ret테이블에 Price 붙이기
+        ret = price_dataframe.merge(ret, left_on = ['Symbol','Date'], right_index = True, how= 'inner').set_index(["Symbol", "Date"])
+
+        # 1,3,6,12개월 누적수익률 뽑는중
+        t_fwds = [1, 3, 6, 12] # 18, 24]
+        for t_fwd in t_fwds[:4]:
+            return_table = ret[ret.index.get_level_values(1) == pd.to_datetime(period) +
+                               pd.DateOffset(months= t_fwd)].reset_index(level= 'Date')
+            df_period["cum_" + str(t_fwd) + "_month"] = df_period.merge(return_table.iloc[:,-1], left_index= True,
+                                                                         right_index= True, how= "inner")["Cumulative"]
+            
+        # N 개월 후의 원금손실 비중 검토/count
+        for t_fwd in t_fwds:
+            counter_table = ret['Price'][ret.index.get_level_values(1) == pd.to_datetime(period)].reset_index(level= 'Date')
+            future_table = ret['Price'][ret.index.get_level_values(1) == pd.to_datetime(period)
+                                        + pd.DateOffset(months= t_fwd)].reset_index(level= 'Date')
+            merging_table = counter_table.merge(future_table, left_index= True, right_index= True, how= 'left') 
+            df_period[str(t_fwd) + "_month_boolean"] = (merging_table['Price_x'] / merging_table['Price_y']).apply(convert_to_counter)            
+            
+        df_counter = df_period.copy()
+        df_counter[item] = df_counter[item] # .apply(convert_to_grade_2)
+        df_counter = [df_counter.groupby([item, str(t_fwd) + "_month_boolean"])[str(t_fwd) + "_month_boolean"].count() for t_fwd in t_fwds]
+        df_counter = pd.concat(df_counter, axis= 1)
+        
+        for t_fwd in t_fwds:
+            final_counter = df_counter[str(t_fwd) + "_month_boolean"][df_counter.index.get_level_values(1) == "Profit"].values / df_counter[str(t_fwd) + "_month_boolean"].groupby(df_counter.index.get_level_values(0)).sum()
+            final_counter = final_counter.to_frame()
+            final_counter.index = final_counter.index.astype(str) 
+            final_counter.loc['Date'] = period
+            final_counter_table = final_counter_table.append(final_counter.T)
+        
+        # POS / NEUT / NEG를 기준으로 나누었을 때 시간흐름별 발생 횟수 보기 
+        final_counter_table_values = list(final_counter_table.columns)
+        final_counter_table_values.remove('Date') 
+        final_counter_table[final_counter_table_values] = final_counter_table[final_counter_table_values].fillna(0).astype("float64")    
+        
+        grade_div = final_counter_table[final_counter_table["Date"] == period].groupby(['Date'])[final_counter_table_values].shift(0)
+        plt.figure(figsize=(12,5))
+        grade_heatmap = sns.heatmap((grade_div.div(grade_div.max(axis=0), axis=1)*10).T, cmap= "RdBu_r",
+                                    cbar= False, annot = grade_div.T, fmt = ".2f")
+        plt.title(item + pd.to_datetime(str(period)).strftime('%y%m%d') + " 등급별 N기간내 상승확률", fontdict = {'fontsize' : 20})
+        plt.tight_layout()
+        grade_heatmap.get_figure() #.savefig("C:/Users/NHWM/Desktop/해외주식_제로인/output/" + item + "_OCCURENCE/" + item +
+                                    #       "_" + pd.to_datetime(str(period)).strftime('%y%m%d') + "_grade_div" + ".png")
+
+        # 타임라인별 기준으로 그룹한 각각의 발생빈도 보기
+        if period == date_list[-1]: # 마지막 date_list가 형성되면 최종적으로 년도별 plot을 생성
+            year_div = final_counter_table.groupby([pd.to_datetime(final_counter_table['Date'].astype(str)).dt.year])[final_counter_table_values].mean()
+            # year_div = year_div.iloc[[1,2,3,0]]
+            plt.figure(figsize=(12,5))
+            year_heatmap = sns.heatmap(year_div.div(year_div.max(axis=1), axis=0),
+                                       cmap= "RdBu_r", cbar= False, annot = year_div, fmt = ".2f")
+            plt.title(item + " 타임라인별 수익발생 확률", fontdict = {'fontsize' : 20})
+            plt.tight_layout()
+            year_heatmap.get_figure().savefig("C:/Users/NHWM/Desktop/해외주식_제로인/output/" + item + "_OCCURENCE/" + item + "_" +
+                                              pd.to_datetime(str(period)).strftime('%y%m%d') + "_year_div_" + ".png")
+            
+            
+
+        
+        '''
+        for t_fwd in t_fwds:    
+            q = df_counter.groupby(['date', df_counter.index.get_level_values(0), df_counter.index.get_level_values(1)])[str(t_fwd) + "_month_boolean" ].sum().unstack()
+            q = q.assign(total = q.sum(1)).stack()
+        '''
+
+        # 리밸런싱(기간별) 수익률 구하기
+        if period in (date_list[-3]):
+            rebalancing_table = ret['Cumulative'][ret.index.get_level_values(1) == pd.to_datetime(date_list[index + 1])]
+            df_period[["R_date", "R_return"]] = df_period.merge(rebalancing_table.reset_index("Date") , left_index= True,
+                                                                right_on= "Symbol", how= "inner")[["Date", "Cumulative"]]
+        else:
+            pass
+        
+        df_analysis = df_analysis.append(df_period)
+        df_analysis.index.name = "Symbol"
+        
+        # 등급별
+        grade_div = df_period.groupby([item])[months].median()
+        plt.figure(figsize=(12,5))
+        grade_heatmap = sns.heatmap((grade_div.div(grade_div.max(axis=0), axis=1)*10).T, cmap= "RdBu_r",
+                                    cbar= False, annot = grade_div.T, fmt = ".2f")
+        plt.title(item + " 등급별 기간 수익률", fontdict = {'fontsize' : 20})
+        plt.tight_layout()
+        grade_heatmap.get_figure().savefig("C:/Users/NHWM/Desktop/해외주식_제로인/output/" + item + "/" + item +
+                                           "_" + pd.to_datetime(str(period)).strftime('%y%m%d') + "_grade_div" + ".png")
+    
+
+        # 년도별
+        if period == date_list[-1]: # 마지막 date_list가 형성되면 최종적으로 년도별 plot을 생성
+            year_div = df_analysis.groupby([pd.to_datetime(df_analysis['date'].astype(str)).dt.year, item])[months].mean()
+            year_div.reset_index(inplace= True)
+            year_table = pd.DataFrame()
+            for col in year_div.columns[3:]:
+                year_table = year_div.pivot(index= 'date', columns= item, values= col)
+                plt.figure(figsize=(12,5))
+                year_heatmap = sns.heatmap(year_table.div(year_table.max(axis=1), axis=0)*10,
+                                           cmap= "RdBu_r", cbar= False, annot = year_table, fmt = ".2f")
+                plt.title(item + " 년도별 " + col + " 수익률", fontdict = {'fontsize' : 20})
+                plt.tight_layout()
+                year_heatmap.get_figure().savefig("C:/Users/NHWM/Desktop/해외주식_제로인/output/" + item + "/" + item + "_" +
+                                                  pd.to_datetime(str(period)).strftime('%y%m%d') + "_year_div_" + col + ".png")
+                
+                # 산출물을 가지고 리밸런싱 누적 수익률 구하기
+                ## 1. 각 리밸런싱 기간마다 속하는 등급의 누적수익률의 평균 구하기
+                a = df_analysis.copy()
+                a[item] = a[item].apply(convert_to_grade)
+                a = a.groupby(["R_date", item])["R_return"].median()
+                ## 2. 등급별로 리밸런싱 포인트를 곱하여서 기간 누적 수익률 구하기
+                b = a.groupby([item,"R_date"]).cumprod()
+                ## 3. 산출물 시각화
+                c = b.reset_index().pivot(index = "R_date", columns = item, values = "R_return")
+                plt.figure(figsize=(12,5))
+                plt.plot(c, alpha= 0.8)
+                plt.title(item + " 리밸런싱 발생 누적 수익률", fontdict= {'fontsize' : 20})
+                plt.legend(c.columns, loc= "upper right")
+                plt.tight_layout()
+                plt.savefig("C:/Users/NHWM/Desktop/해외주식_제로인/output/" + item + "/" + item + "_" +
+                            pd.to_datetime(str(period)).strftime('%y%m%d') + "_rebalanced_return_" + col + ".png")
+        else:
+            pass
+        
+    return df_analysis
+
+    '''    
+    df_period[df_period['symbol1'] == 'A002170']
+    df_period_return[df_period_return.index.get_level_values(0) == "A002170"]    
+    return_table.reset_index()[return_table.reset_index()['Symbol'] == "A002170"]
+    '''
+
+
+if __name__ == "__main__":
+    
+    file_name = "우리쪽_비교데이터_20200914"
+    quantile_count = 5
+       
+    df_nh, df_master = get_master_from_file(file_name, 2014, 2018) 
+    df_nh = df_nh[df_nh['종목코드'].isin(df.index)]
+    df_nh = preprocessing_data(df_nh, df_master) 
+
+    nh_date = df_nh['Date'].unique()
+    han_date = df['date'].unique()[1:]
+    date_list = dict(zip(nh_date, han_date))    
+    
+    df_nh['file_date'] = df_nh['Date'].replace(date_list)
+    df_matrix_total = pd.DataFrame()
+    df_matrix_grade_total = pd.DataFrame()
+    
+    for date in date_list.values():
+        df_info = df_nh[df_nh['file_date'] == date]
+        df_info = pd.merge(df_info, get_quantile(df_info, "시가총액", quantile_count), left_index = True, right_index = True, how= "inner")
+        df_info = df_info.set_index("종목코드")
+        df_main = df_info[['종목명', '산업명','시가총액_Q그룹']]
+    
+        df_matrix, df_matrix_grade = make_score_matrix(df_info, df_main, np.datetime_as_string(date, unit = "D"))
+        df_matrix_total = df_matrix_total.append(df_matrix)
+        df_matrix_grade_total = df_matrix_grade_total.append(df_matrix_grade)
+    df_matrix_grade_total.rename(columns = {"Date" : "date"}, inplace = True) 
+    # df_matrix_grade_total['date'] = pd.to_datetime(df_matrix_grade_total['date'])
+    
+    items_nh = list(col for col in df_matrix_grade_total.columns if "총평균" in col) + ['종합점수']
+    months = ['cum_1_month','cum_3_month', 'cum_6_month', 'cum_12_month']
+    for item in items_nh:
+        period_return(df_matrix_grade_total, item, months, price_table)
+    
