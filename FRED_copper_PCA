@@ -1,0 +1,154 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Dec 17 16:48:50 2019
+
+@author: NHWM
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import talib as ta
+from fredapi import Fred
+from sklearn.preprocessing import StandardScaler
+from yahoo_finance import Share # 야후 파이낸스
+# import pandas_datareader.data as web # 구글 파이낸스
+import datetime
+# import yfinance as fyf
+
+fred = Fred(api_key = '63c1dd0754558edb11f34b94661c7447')
+
+'''
+df = pd.read_csv("CLI.csv", encoding = 'UTF-8') 
+df.to_excel("output.xlsx")
+df_usa = df[df['LOCATION'] == 'USA']
+
+cli = df_usa['Value'].to_frame().join(pd.to_datetime(df_usa['TIME']))
+cli.index = pd.to_datetime(df_usa['TIME'])
+cli_quarter = cli.resample('Q').mean()
+# cli['Quarter'] = cli['TIME'].dt.quarter
+# cli_quarter = cli.groupby(['Quarter']).apply(lambda x: x.mean())
+'''
+
+cli_usa = fred.get_series("USALOLITONOSTSAM")
+copper = fred.get_series("PCOPPUSDQ")
+dollar_index = fred.get_series("TWEXB")
+gold = fred.get_series("GOLDPMGBD228NLBM")
+oil = fred.get_series("DCOILWTICO")
+iron = fred.get_series("PIORECRUSDM")
+freight = fred.get_series("FRGSHPUSM649NCIS")
+china = fred.get_series("XTIMVA01CNM667N")
+
+# dxy = Share("DX-Y")
+start = datetime.datetime(2010,1,1)
+end = datetime.datetime(2019,12,15)
+# bp = web.DataReader('BP', 'quandl', start, end, access_key = "rUYm8sR4cYYCzmKzx861")
+
+year = str(2010) # 2000년 이후부터 
+cli = cli_usa[cli_usa.index >= year]
+copper = copper[copper.index >= year]
+dollar = dollar_index[dollar_index.index >= year]
+gold = gold[gold.index >= year]
+oil = oil[oil.index >= year]
+iron = iron[iron.index >= year]
+freight = freight[freight.index >= year]
+china = china[china.index >= year]
+ 
+cli = cli.resample('Q').mean() # Indicator / Leading Indicators OECD: Leading indicators: CLI
+copper = copper.resample('Q').mean() # Price / Global price of Copper
+dollar = dollar.resample('Q').mean() # Index / Trade Weighted U.S. Dollar Index: Broad, Goods
+gold = gold.resample('Q').mean() # Price / Gold Fixing Price 3:00 P.M. (London time) in London Bullion Market
+oil = oil.resample('Q').mean() # Price / Crude Oil Prices: West Texas Intermediate (WTI)
+iron = iron.resample('Q').mean() # Price / Global price of Iron Ore
+freight = freight.resample('Q').mean() # Index / Cass Freight Index: Shipments
+china = china.resample('Q').mean() # Gross Price / Imports: Value Goods for China
+
+df = pd.concat([cli.reset_index(drop=True), copper.reset_index(drop=True),
+                dollar.reset_index(drop=True), gold.reset_index(drop=True),
+                oil.reset_index(drop=True), iron.reset_index(drop=True),
+                freight.reset_index(drop=True), china.reset_index(drop=True)], axis=1)
+summary = df.describe()
+
+# df = df.rename(columns = {'0':'CLI', '1':'copper'}, inplace= True)
+df.columns = ["CLI", "Copper","Dollar","Gold","Oil", "Iron", "Freight", "China"]
+df.index = dollar.index
+scaler = StandardScaler()
+scaler.fit(df)
+df_scaled = pd.DataFrame(scaler.transform(df))
+df_scaled.index = dollar.index
+df_scaled.columns = ["CLI", "Copper","Dollar","Gold","Oil", "Iron", "Freight", "China"]
+
+df_scaled.plot(figsize = [10,4])
+
+
+df_log = np.log(df/df.shift(1))
+fig = plt.figure(figsize=(12,6))
+plt.plot(df_log[["Dollar","Oil","Gold","China","Freight"]])
+plt.legend(df_log[["Dollar","Oil","Gold","China","Freight"]])
+plt.tight_layout()
+corr_log = df_log.corr()
+
+dollar_boolean = df['Dollar'].diff(1) > 0
+range_list = []
+prev_val = False
+for key, val in dollar_boolean.iteritems():
+    if prev_val != val:
+        if val:
+            start = key 
+        else:
+            range_list.append((start, key))   
+    prev_key = key
+    prev_val = val
+range_list
+
+plt.figure(figsize=(12,6))
+plt.plot(df_log[["Dollar","Oil","Gold","China","Freight"]])
+for (start, end) in range_list:
+    plt.axvspan(start, end, color='gray', alpha= .5)
+plt.legend(df_log[["Dollar","Oil","Gold","China","Freight"]])
+plt.tight_layout()
+
+from sklearn.decomposition import PCA
+from sklearn.impute import SimpleImputer
+imp_mean = SimpleImputer(missing_values = np.nan, strategy = 'mean')
+imp_mean.fit(df_log)
+X = imp_mean.transform(df_log)
+print(X)
+pca = PCA(n_components = 2)
+principalComponents = pca.fit_transform(X)
+print(principalComponents)
+print(pca.explained_variance_ratio_.cumsum())
+
+
+
+'''
+fig = plt.figure(figsize=(12,6))
+# plt.plot(df_scaled[["Oil","Copper","Dollar"]]) 
+plt.plot(df_scaled[["Dollar","Oil","Gold"]])
+plt.legend(df_scaled[["Dollar","Oil","Gold"]])
+plt.tight_layout()
+corr_dir = df_scaled.corr()
+'''
+# china.resample('Q').mean().pct_change() = shift해서 -1 하는것과 같다
+'''
+cli_usa_rolling = cli_usa.rolling(3).mean() < cli_usa
+# 연속해서 True값을 가지는 구간의 목록을 튜플 리스트로 생성
+range_list = []
+prev_val = False
+'''
+'''
+for key, val in cli_usa_rolling.iteritems():
+    if prev_val != val:
+        if val:
+            start = key 
+        else:
+            range_list.append((start, key))   
+    prev_key = key
+    prev_val = val
+range_list
+
+plt.figure(figsize=(12,6))
+plt.plot(cli_usa.rolling(3).mean())
+for (start, end) in range_list:
+    plt.axvspan(start, end, color='gray', alpha= .5)
+'''
