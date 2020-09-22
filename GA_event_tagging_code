@@ -1,0 +1,279 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Sep 22 17:41:03 2020
+
+@author: NHWM
+"""
+
+from pyhive import hive  
+
+import pandas as pd  
+import numpy as np 
+import matplotlib.pyplot as plt  
+from tqdm import tqdm 
+from datetime import datetime, date, time, timedelta  
+
+''' 
+##################################################################### 
+# 기본 기능 
+##################################################################### 
+''' 
+
+def eng_upper(lst) : 
+    '''리스트 대문자 변환''' 
+    return [str(each).upper() for each in lst] 
+
+def Remove_ffill_NoneOperDt(df, colname) : 
+    '''비영업일(주말 등)에 이 전 데이터로 padding 되서 stacked 된 것들 간단하게 제거''' 
+    tmpbool = (df[colname] == df[colname].shift(1)) & (df[colname] == df[colname].shift(2))  
+    tmpbool = tmpbool | tmpbool.shift(-1) 
+    return df.loc[~tmpbool] 
+
+''' 
+##################################################################### 
+# Hive Connection 
+##################################################################### 
+''' 
+
+def hive_connect(username, password, database) : 
+    # (사용예시) conn = hive_connect(username = '64645', password = '64645q12!', database = 'lake') 
+    dbconnection = hive.Connection('172.20.8.61', port=10000,  
+                                   username= username, password= password, database= database,  
+                                   auth='LDAP')  
+                                          
+    return dbconnection 
+
+def hive_LoginInfo() : 
+    return {'username':'64645', 'password':'64645q12!'} 
+
+def hive_mapreduce(conn) : 
+    '''  
+    hive.fetch.task.conversion = none' : map-reduce 사용 
+    일반적으로 간단한 작업에 대해선 fetch이고, size가 임계를 넘어가는 경우만 mapreduce가 trigger 된다. 
+    이 func은 임계를 무시하고 강제 trigger 시킨다. 
+     
+    * 해당 기능을 필수적으로 사용하시오. 그렇지 않으면 실 DB가 아닌 Hive Memory내 데이터를 추출할 가능성이 큽니다. 
+    ''' 
+    cursor = conn.cursor() 
+    cursor.execute('SET hive.fetch.task.conversion = none') 
+
+def GetData_QV_short(conn) : 
+    hive_mapreduce(conn) 
+     
+    query = ''' 
+            SELECT  count(*) 
+            FROM    lake.CUS_EPC_DAT_QV_SMPC 
+            WHERE 1=1 
+            AND visit_date = CAST(REPLACE(CURRENT_DATE(), '-', '') AS int) - 1 
+            AND eventcategory = '현재가_상세' 
+            AND eventaction LIKE '종목진단_단기%' 
+            ''' 
+    data = pd.read_sql(query, conn) 
+    data.columns = eng_upper(data.columns) 
+    return data 
+
+def GetData_QV_long(conn) : 
+    hive_mapreduce(conn) 
+     
+    query = ''' 
+            SELECT  count(*) 
+            FROM    lake.CUS_EPC_DAT_QV_SMPC 
+            WHERE 1=1 
+            AND visit_date = CAST(REPLACE(CURRENT_DATE(), '-', '') AS int) - 1 
+            AND eventcategory = '현재가_상세' 
+            AND eventaction LIKE '종목진단_장기%' 
+            ''' 
+    data = pd.read_sql(query, conn) 
+    data.columns = eng_upper(data.columns) 
+    return data 
+
+def GetData_NHMUH_short(conn) : 
+    hive_mapreduce(conn) 
+     
+    query = ''' 
+            SELECT  count(*) 
+            FROM    lake.CUS_EPC_DAT_NAMUH_SMPC 
+            WHERE 1=1 
+            AND visit_date = CAST(REPLACE(CURRENT_DATE(), '-', '') AS int) - 1 
+            AND eventcategory = '현재가_상세' 
+            AND eventaction LIKE '종목진단_단기%' 
+            ''' 
+    data = pd.read_sql(query, conn) 
+    data.columns = eng_upper(data.columns) 
+    return data 
+
+def GetData_NHMUH_long(conn) : 
+    hive_mapreduce(conn) 
+     
+    query = ''' 
+            SELECT  count(*) 
+            FROM    lake.CUS_EPC_DAT_NAMUH_SMPC 
+            WHERE 1=1 
+            AND visit_date = CAST(REPLACE(CURRENT_DATE(), '-', '') AS int) - 1 
+            AND eventcategory = '현재가_상세' 
+            AND eventaction LIKE '종목진단_장기%' 
+            ''' 
+    data = pd.read_sql(query, conn) 
+    data.columns = eng_upper(data.columns) 
+    return data 
+
+conn = hive_connect(username = '64645', password = '64645q12!', database = 'lake') 
+
+qv_short = GetData_QV_short(conn) 
+qv_long = GetData_QV_long(conn) 
+namuh_short = GetData_NHMUH_short(conn) 
+namuh_long = GetData_NHMUH_long(conn) 
+
+# qv랑 namuh랑 콘캣 시켜버리기 
+dfs_freq = pd.concat([qv_short, qv_long, namuh_short, namuh_long], axis = 1) 
+dfs_freq.columns = ['QV_Short', 'QV_Long', 'Namuh_Short', 'Namuh_Long'] 
+dfs_freq['QV_Agg'] = dfs_freq['QV_Short'] + dfs_freq['QV_Long'] 
+dfs_freq['Namuh_Agg'] = dfs_freq['Namuh_Short'] + dfs_freq['Namuh_Long'] 
+dfs_freq['NH_Total'] = dfs_freq['QV_Agg'] + dfs_freq['Namuh_Agg']  
+dfs_freq = dfs_freq[["QV_Long", "QV_Short", "QV_Agg", "Namuh_Long", "Namuh_Short", "Namuh_Agg", "NH_Total"]] 
+
+
+# QV고객 일별 Top10 조회종목 뽑기 
+
+def GetData_QV_items(conn) : 
+    hive_mapreduce(conn) 
+     
+    query = ''' 
+            SELECT  * 
+            FROM    lake.CUS_EPC_DAT_QV_SMPC 
+            WHERE 1=1 
+            AND visit_date = CAST(REPLACE(CURRENT_DATE(), '-', '') AS int) - 1 
+            AND eventcategory = '현재가_상세' 
+            AND eventaction LIKE '종목진단_%' 
+            ''' 
+    data = pd.read_sql(query, conn) 
+    data.columns = eng_upper(data.columns) 
+    return data 
+
+def GetData_NAMUH_items(conn) : 
+    hive_mapreduce(conn) 
+     
+    query = ''' 
+            SELECT  * 
+            FROM    lake.CUS_EPC_DAT_NAMUH_SMPC 
+            WHERE 1=1 
+            AND visit_date = CAST(REPLACE(CURRENT_DATE(), '-', '') AS int) - 1 
+            AND eventcategory = '현재가_상세' 
+            AND eventaction LIKE '종목진단_%' 
+            ''' 
+    data = pd.read_sql(query, conn) 
+    data.columns = eng_upper(data.columns) 
+    return data 
+
+qv_items =  GetData_QV_items(conn) 
+namuh_items =  GetData_NAMUH_items(conn) 
+
+# QV랑 NAMUH통합한 일별 데이터  
+dfs = qv_items.append(namuh_items) 
+dfs.head() 
+
+''' 
+df = pd.read_excel("C:/Users/NHWM/Desktop/테스팅용_20200921.xlsx") 
+df_namuh = pd.read_excel("C:/Users/NHWM/Desktop/테스팅용_20200921_나무.xlsx") 
+
+dfs = pd.concat([df, df_namuh]) 
+''' 
+
+
+dfs['Symbol'] = "A" + dfs['eventlabel'].str[:6] 
+
+breaker = tuple(('A' + dfs['eventlabel']).str.split("_")) 
+symbol = [x[0] for x in breaker] 
+name = [x[1] for x in breaker] 
+info = pd.DataFrame(list(zip(symbol, name)), columns= ['Symbol', 'Name']) 
+info = info[~info['Symbol'].duplicated()] 
+info.set_index("Symbol", inplace= True) 
+
+    """  
+    "visit_date" : "방문일자", 
+    'USER_OR_SESSION_CD4' : 유저코드4_브랜드, 
+    "eventaction" : "장/단기구분", 
+    "eventlabel" : "종목코드_종목명_날짜_시간" 
+     
+    """ 
+
+dfs['Symbol'] = "A" + dfs['EVENTLABEL'].str[:6] 
+
+breaker = tuple(('A' + dfs['EVENTLABEL']).str.split("_")) 
+symbol = [x[0] for x in breaker] 
+name = [x[1] for x in breaker] 
+info = pd.DataFrame(list(zip(symbol, name)), columns= ['Symbol', 'Name']) 
+info = info[~info['Symbol'].duplicated()] 
+info.set_index("Symbol", inplace= True) 
+
+group_count = dfs.groupby(["VISIT_DATE", 'USER_OR_SESSION_CD4','EVENTACTION','Symbol']).size().sort_values(ascending = False) 
+rank_count = group_count.reset_index().sort_values(by = ['USER_OR_SESSION_CD4','EVENTACTION', 0], ascending= False) 
+rank_count = rank_count.merge(info, left_on = 'Symbol', right_index = True, how= 'left').set_index(['Symbol', 'Name']) 
+
+# QV와 나무의 Top10 구하기 
+top_10_channel = rank_count.groupby(['USER_OR_SESSION_CD4','EVENTACTION'])[0].apply(lambda x: x.nlargest(10)) 
+# 장단기 구분 Top10 구하기 
+aggregate = rank_count.reset_index().groupby(['EVENTACTION', 'Symbol', 'Name'])[0].sum().sort_values(ascending= False) 
+top_10_term = aggregate.groupby([aggregate.index.get_level_values(0)], group_keys= False).apply(lambda x: x.nlargest(10)) 
+# Top10 조회수 통합 구하기 
+aggregate_total = rank_count.reset_index().groupby(['Symbol', 'Name'])[0].sum().sort_values(ascending = False)  
+top_10_total = aggregate_total.nlargest(10) 
+
+
+# 날짜 구하기  
+today = datetime.today()  
+yesterday = today - timedelta(days = 1) 
+day_name = ['월요일', '화요일', '수요일', '목요일', '금요일', '토요일', '일요일'] 
+
+score_date = yesterday.strftime("%Y-%m-%d") 
+score_day = day_name[yesterday.weekday()] 
+
+# 발송 전 마지막 코드 정리 
+top_10_channel = top_10_channel.reset_index().rename(columns={0: "Aggregate"}).set_index("Symbol") 
+top_10_term = top_10_term.reset_index().rename(columns={0: "Aggregate"}).set_index("Symbol") 
+top_10_total = top_10_total.reset_index().rename(columns={0: "Aggregate"}).set_index("Symbol") 
+
+import requests  
+import os  
+
+os.putenv('NLS_LANG', '.UTF8')  
+
+
+class MsgSender:  
+    def __init__(self):  
+        self.url = "http://172.20.3.110:8010/sendMessage"  
+        self.headers = {'Content-type': 'application/json'}  
+
+    def send(self, receiver_ids, text, message_class="5"):  
+        # strSenderID : 발신자 ID  
+        # strSenderName : 발신자 명  
+        # strSenderDesc : 발신자 상세 설명  
+        # strReceiverIDs : 수신자 아이디, 탭 또는 스페이스로 구분  
+        # strContext : 전송 내용  
+        # base64 : base64 encoding 여부, true, false로 지정  
+        # textType : 텍스트 포멧 지정(1 : HTML, 0 : 텍스트)  
+        # messageClass : 전송 메세지 타입 구분 (1 : 일반쪽지, 5 : 긴급쪽지)  
+        datas = {"strSenderID": "SM032", 
+                 "strSenderName": "RA 전략", 
+                 "strReceiverIDs": receiver_ids, 
+                 "strContext": text, 
+                 "base64": False,  
+                 "textType": "1", 
+                 "messageClass": message_class}  
+        rsp = requests.post(self.url, json = datas, headers = self.headers)  
+        return rsp  
+
+
+if __name__ == "__main__":  
+    msgSender = MsgSender()  
+    friend_list = ["64645", "64623", "64341", "61678", "64617", "59853", "55506", "62648"] 
+    for friend in friend_list: 
+        ret = msgSender.send(friend, "<b> 안녕하세요 <br/> <br/> Digital 솔루션부입니다. <br/> <br/> " + score_date + score_day + 
+            " <br/> <br/> 매체/장단기 구분 조회 현황 공유드립니다 <br/> <br/>" + dfs_freq.to_html() +  
+            " <br/> <br/> 스코어링 조회수 장/단기 종합 Top10 종목 알려드립니다 <br/> <br/> " + top_10_total.to_html() + 
+            " <br/> <br/> 장기 조회수 Top10 종목입니다 <br/> <br/>" +  
+            top_10_term[top_10_term['EVENTACTION'] == '종목진단_장기스코어'].to_html() + 
+            " <br/> <br/> 단기 조회수 Top10 종목입니다 <br/> <br/>" + 
+            top_10_term[top_10_term['EVENTACTION'] == '종목진단_단기스코어'].to_html())  
+
+ 
