@@ -1,0 +1,135 @@
+# -*- coding: utf-8 -*- 
+""" 
+Spyder Editor 
+
+This is a temporary script file. 
+""" 
+
+scorebasedata = pd.DataFrame() 
+query = """ 
+SELECT FCL_DT, IEM_CD, IEM_NM, RATS_IDX_DIT_CD, FNGD_SER_NM, FNGD_BTP_NM, 
+TTR_NRF_ICR_RT, SLS_BFT_ICR_RT, EPS_FY1_RT, EPS_FY2_RT, SLS_BFT_FY1_RT, SLS_BFT_FY2_RT, 
+PER, OGT_BYN_TRD_AMT, OGT_NBY_AMT, RGS_FNR_NBY_AMT,TRD_AMT, BAL_TRD_BNC_IND_AMT, 
+FQ1_EPS_RT, FQ2_EPS_RT, FQ1_SLS_BFT_RT,FQ2_SLS_BFT_RT, VTY_RT, PCR, 
+END_PR, STK_AED_END_PR, WEK_UNT_PFT_RT, MM1_PFT_RT, MM3_PFT_RT, LTG_STK_CNT, 
+MKT_PR_TAL, EPS_ICR_RT, BTP_ITR_MKT_PR_TAL_RNK, RBSC_PSR, RBSC_PBR, RBSC_FY1_ROE, MM6_PFT_RT, 
+DD_VTY_RT, WEK_VTY_RT 
+FROM DBM.TRATS_RBSC_SHM_IPT 
+WHERE FCL_DT = :today 
+""" 
+scorebasedata = pd.read_sql(query, con=dbconnection, params= {"today": datetime.now().strftime('%Y%m%d')}) 
+scorebasedata.rename(columns = {"FCL_DT" : "date", "IEM_NM" : "Name", "IEM_CD" : "Symbol", "RATS_IDX_DIT_CD": "시장구분", "FNGD_SER_NM": "FnGuide Sector", 
+"FNGD_BTP_NM" : "FnGuide Industry Group", "TTR_NRF_ICR_RT" : "당기순이익증가율(전년동기)(%)", 
+"SLS_BFT_ICR_RT" : "영업이익증가율(전년동기)(%)", "EPS_FY1_RT": "EPS (E3, 1M Chg)(%)1", 
+"EPS_FY2_RT" : "EPS (E3, 1M Chg)(%)2", "SLS_BFT_FY1_RT":"영업이익 (E3, 1M Chg)(%)1", 
+"SLS_BFT_FY2_RT" : "영업이익 (E3, 1M Chg)(%)2", "PER" : "PER(직전4분기)(배)", "OGT_BYN_TRD_AMT" : "매수대금(기관계)(20일합산)(만원)", 
+"OGT_NBY_AMT" : "순매수대금(기관계)(20일합산)(만원)", "RGS_FNR_NBY_AMT" : "순매수대금(등록외국인)(20일합산)(만원)", 
+"TRD_AMT" : "거래대금 (20일 평균)(원)", "BAL_TRD_BNC_IND_AMT" : "대차거래 잔고증감 (20일)(주)", "FQ1_EPS_RT" : "EPS (E3, 1M Chg)(%)3", 
+"FQ2_EPS_RT" : "EPS (E3, 1M Chg)(%)4", "FQ1_SLS_BFT_RT": "영업이익 (E3, 1M Chg)(%)3", "FQ2_SLS_BFT_RT" : "영업이익 (E3, 1M Chg)(%)4", 
+"VTY_RT" : "변동성 (W,2Yr)", "PCR": "PCR(직전4분기)(배)", "END_PR" : "종가(원)", "STK_AED_END_PR":"수정주가(원)", 
+"WEK_UNT_PFT_RT":"수익률 (1주)(%)", "MM1_PFT_RT": "수익률 (1개월)(%)", "MM3_PFT_RT":"수익률 (3개월)(%)", 
+"MM6_PFT_RT" : "수익률 (6개월)(%)", "LTG_STK_CNT" : "상장주식수 (보통)(주)", "MKT_PR_TAL": "시가총액 (보통-상장예정주식수 포함)(백만원)", 
+"EPS_ICR_RT" : "EPS증가율(전년동기)(%)", "BTP_ITR_MKT_PR_TAL_RNK" : "업종내 시가총액순위", "RBSC_PSR" : "PSR(직전4분기)(배)", 
+"RBSC_PBR": "PBR(배)", "RBSC_FY1_ROE": "ROE (E3, 3M Chg)(%)", "DD_VTY_RT": "변동성 (D,1Yr)", "WEK_VTY_RT":"변동성 (W,1Yr)"}, inplace = True) 
+
+
+
+
+
+
+
+
+
+
+### Close price past revenue 
+import pandas as pd 
+import matplotlib.pyplot as plt 
+import numpy as np 
+import talib as ta 
+import seaborn as sns 
+
+# 수익률 구하는 깍뚜기 
+def net_return(df): 
+df_close = pd.read_csv("C:/Users/NHWM/Desktop/Morningstar Dataset/Close.csv") 
+df_close['Date'] = pd.to_datetime(df_close['Date']) 
+
+# 일별 수익률 
+df_return = pd.DataFrame() 
+for i in df_close.columns[1:]: 
+df_return = df_return.append(df_close[i].shift(1) / df_close[i] - 1) 
+df_return = df_return.transpose() 
+df_return.insert(0, "Date", df_close['Date']) 
+
+# 일별 로그 누적 수익률 
+df_cum = pd.DataFrame() 
+for i in df_close.columns[1:]: 
+df_cum = df_cum.append(np.log(df_close[i] / df_close[i].shift(1))) 
+df_cum = df_cum.transpose() 
+df_cum['Year'] = df_return['Date'].dt.year 
+df_log_ret = np.exp(df_cum.groupby(['Year']).apply(lambda x : x.cumsum().tail(1))) 
+df_select = df_log_ret[df] 
+df_select = df_select.transpose() 
+df_select.columns = ['2013','2014','2015','2016','2017','2018','2019'] 
+
+sns.set() 
+ax = sns.heatmap(df_select -1, annot = True, linewidths = .5, cmap='RdBu', fmt = '.0%') 
+ax.xaxis.tick_top() 
+plt.yticks(rotation= 0) 
+plt.title("Ggak Ddoo Ki", fontsize = 15) 
+
+net_return(['SPY','AGG','EEM','TIP','HYG','TLT','EMB','ACWI']) 
+
+# 변동성(분산) 구하는 깍뚜기 
+def net_volatility(df): 
+df_close = pd.read_csv("C:/Users/NHWM/Desktop/Morningstar Dataset/Close.csv") 
+df_close['Date'] = pd.to_datetime(df_close['Date']) 
+
+# 일별 수익률 
+df_return = pd.DataFrame() 
+for i in df_close.columns[1:]: 
+df_return = df_return.append(df_close[i].shift(1) / df_close[i] - 1) 
+df_return = df_return.transpose() 
+df_return.insert(0, "Date", df_close['Date']) 
+
+# 일별 분산도 
+df_return['Date'] = df_return['Date'].dt.year 
+df_var_year = df_return.groupby(['Date']).apply(lambda x : x.var()) 
+df_select = df_var_year[df] 
+df_select = df_select.transpose() 
+
+sns.set() 
+ax = sns.heatmap((df_select*10000), annot = True, linewidths = .5, cmap='RdBu') 
+ax.xaxis.tick_top() 
+plt.yticks(rotation= 0) 
+plt.title("Ggak Ddoo Ki (Vol)", fontsize = 15) 
+
+net_volatility(['SPY','AGG','EEM','TIP','HYG','TLT','EMB','ACWI']) 
+
+''' 
+# cumprod 누적 수익률 
+# df_return['year'] = df_return.Date.dt.year 
+df_cumulative = pd.DataFrame() 
+for i in df_return.columns[1:]: 
+df_cumulative = df_return.groupby(df_return.Date.dt.year).apply(lambda x : np.cumprod(1+df_return[i])-1) 
+
+# 누적 수익률 
+df_cumulative = [] 
+for i in df_return.columns: 
+df_cumulative = df_cumulative.append(np.cumprod(1 + df_return[i]) - 1) 
+df_cumulative = df_cumulative.transpose() 
+# print (((df_return[i]+1).cumprod()-1).iloc[-1]) 
+
+
+# 년도별 평균 종가 
+for i in df_close.columns[1:]: 
+print (df_close[i].groupby(df_close.Date.dt.year).mean()) 
+
+
+
+g = df_close.groupby("").describe() 
+df_close[df_close.drop('Date', axis=1)] 
+type(df_close.columns[0]) 
+# - 깍두기의 x축은 기간 / y축은 상품 / value는 수익률 
+df_close.groupby(df_close["Date"].map(lambda x: x.year)) 
+''' 
+
