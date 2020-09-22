@@ -1,0 +1,171 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Feb 20 08:33:13 2020
+
+@author: NHWM
+"""
+
+# ELS 3 Underlying Assets
+
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import scipy
+import math
+import random
+import warnings
+warnings.filterwarnings("ignore")
+
+random.seed(11)
+
+# Monte Carlo simulation trial number
+n = 100
+
+# 액면가
+face = 10000
+
+# 평가일 정보 
+val_date = pd.to_datetime('2020-02-12')
+# 조기 상환일 정보
+mid_date = pd.to_datetime(['08/07/2020','02/08/2021','08/10/2021','02/09/2022','08/10/2022', '02/10/2023'])
+
+# 조기상환 레벨 입력 
+strike= [0.90, 0.90, 0.85, 0.85, 0.75, 0.75]
+# 조기상환시 쿠폰입력 
+c_rate= [0.0225, 0.045, 0.0675, 0.09, 0.1125, 0.135] 
+
+# 더미(보너스상환) 입력 
+dummy= 0.135
+# Knock-In 레벨 입력 
+ki= 0.5 
+# 낙인 여부 입력: Yes = 낙인된상황 | N0 = 낙인이 안된상황 
+ki_YesNo= 'NO'
+
+# Underlying Assets Information 
+ref_s= [48300, 86800, 56000] # 최초 가격 
+S= [48300, 86800, 56000]; # 현재 가격
+
+r= 0.015 # risk free rate :무위험 이자율
+
+vol = [0.1882, 0.2193, 0.2069] # 변동성 
+
+rho= 0.1798 # 자산 1과 자산 2 사이 상관계수 
+rho1= 0.6996 # 자산 1과 자산 3 사이 상관계수
+rho2= 0.2166 # 자산 2과 자산 3 사이 상관계수
+
+q = [0.01, 0.02, 0.03] # 각 자산별  배당 입력 :연율화된 배당율 입력
+
+# Redemption date check: 조기상환일 날짜계산 및 체크   
+temp_ch = mid_date - val_date # 평가일과 조기상환일 간의 difference  
+temp_ch = list(temp_ch.days) # 계산 후 0보다 큰 날짜 갯수 저장공간 만듬  
+mid_size = len(temp_ch)
+N = temp_ch[-1] # time length
+dt = 1/365
+
+# Payment Calculation
+# payment = pd.DataFrame(index= np.arange(n), columns= np.arange(len(temp_ch)))
+line = face * (1 + pd.Series(c_rate))
+line = line.array
+payment = np.tile(line, (n,1))
+payment = pd.DataFrame.from_records(payment)
+
+# Correlation Matrix among Underlying Assets
+corr= scipy.array([[1, rho, rho1], [rho, 1, rho2], [rho1, rho2, 1]]) # 3개 기초자산에 대한 상관계수 행렬 생성 (3X3) 행렬
+M = scipy.linalg.cholesky(corr, lower= False)
+
+sp1 = pd.DataFrame(index= np.arange(n), columns= np.arange(temp_ch[-1] + 1))
+sp1.loc[:,0] = S[0]
+sp2 = pd.DataFrame(index= np.arange(n), columns= np.arange(temp_ch[-1] + 1))
+sp2.loc[:,0] = S[1]
+sp3 = pd.DataFrame(index= np.arange(n), columns= np.arange(temp_ch[-1] + 1))
+sp3.loc[:,0] = S[2]
+
+for i in range(0,n):
+    w0=  pd.DataFrame(np.random.randn(N,3))   
+    w = np.dot(w0,M) # Cholesky Decomposition Matrix Multiplication
+    w = pd.DataFrame.from_records(w) # switching from np.array to DF
+    for j in range(1, N+1):
+        sp1.loc[i,j] = sp1.loc[i, j-1] * np.exp((r-q[0] - vol[0]**2/2) * dt + vol[0] * math.sqrt(dt) * w.loc[j-1, 0])
+        sp2.loc[i,j] = sp2.loc[i, j-1] * np.exp((r-q[1] - vol[1]**2/2) * dt + vol[1] * math.sqrt(dt) * w.loc[j-1, 1])
+        sp3.loc[i,j] = sp3.loc[i, j-1] * np.exp((r-q[2] - vol[2]**2/2) * dt + vol[2] * math.sqrt(dt) * w.loc[j-1, 2])
+        
+# perfomance define 
+r1 = sp1 / ref_s[0] 
+r2 = sp2 / ref_s[1]
+r3 = sp3 / ref_s[2]
+
+# 3개의 기초자산중 Worst perfomance를 결정 총 몬테칼로 횟수 * 총 상품 날수 (ns=100이고 3년 날수 =1095) 
+wp = r1.where(r1 < r2, r2)
+wp = wp.where(wp < r3, r3)
+
+# Satisfying Redemption check (상환 기준 충족) & physical payment calculate (충족시 상환금액 계산) 
+strik_ch= wp.loc[:,[x for x in temp_ch]] 
+# 조기/만기상환 평가일의  Worst perfomance 를 따로 모음 즉, 
+#100X 1095 중 1095 중 조기상환 인덱스의 Data 100X6  데이터 모음
+# mid_ch+1 이유:  첫 인덱스에 첫째일의 현재가/기준가가 입력 되었으므로 mid_ch+1 가 조기상환 인덱스가 됨 
+strik_ch.columns = range(strik_ch.shape[1])  
+     
+pay_off= pd.DataFrame(index= np.arange(n) , columns=np.arange(mid_size)) # 조기/만기상환 평가일의 pay_off 를 저장하기위한  공간 만듬  100 X6  이고 모든 원소가 0임 
+for i in list(range(n)): 
+  for j in range(mid_size):
+     if strik_ch.loc[i,j] >= strike[j]:
+         # 상환 레벨 보다 WP 가 크면
+         pay_off.loc[i,j]= payment.loc[i,j]
+         break
+         # payment 해당 행열 (조기상환 순서)에 각 상환금액 으로  Pay_off 바꿈
+pay_off = pay_off.fillna(0)
+# 만기 미리구함
+mat_freq = pay_off.iloc[:,-1][pay_off.iloc[:,-1] == face* (1+c_rate[-1])].count()
+# pay_off = pay_off.reindex(sorted(pay_off.columns), axis=1)
+
+# Un-Satisfying Redemption & KI check  & physical payment calculate
+# 조기 만기 상환을 못한 나머지 경우 평가 를 Pay_off 행렬에 채워 넣음  
+# 원소가 0인 인덱스에 대해서 
+# KI을 기존 평가에서 안 친경우 는 ==0  이지만  KI을 평가에서 친경우  워스트 값에 액면을 곱해서 나옴
+# 단 만기에 낙인도 아니고 수익 상한도 아닌경우는 Dummy 를 줌 (보너스 쿠폰)
+# 기존 과거 상품 정보에 낙인(KI)을 친 경우는 만기시 수익상환이 아니면 Dummy 도 사라지고 
+# 워스트에 액면 곱한형태로 반환 
+
+for i in range(n):
+    if pay_off.iloc[i,:].values.sum() == 0: # 조기상환일 어느 하나라도 낙인값을 도달한다면 
+        if (ki_YesNo =="NO"):
+            ki_event = any(wp.loc[i,:] < ki) # False는 낙인 미발생 / True는 낙인 발생
+            if ki_event == True:
+                pay_off.iloc[i,-1]= face*wp.iloc[i,-1]
+            else: # 낙인이 발생했을 경우
+                pay_off.iloc[i,-1]= face*(1+dummy)
+        elif (ki_YesNo =="YES"):            
+            pay_off.iloc[i,-1]= face*wp.iloc[i,-1]
+pay_off
+   
+# Expectation Value 기대값 
+exp_payoff = pay_off.mean() # 각 조기상환별 평균 
+exp_payoff * np.exp([-r * i / 365 for i in temp_ch])
+
+# ELS Value 
+els_price = sum(exp_payoff) # 최종 ELS 평가 금액 
+
+# probability Calculate
+# redemption Probability (조기상환 확률)
+mid_freq = pay_off.iloc[:,:-1][pay_off != 0].count()
+mid_prob = mid_freq / n
+
+# probability of  winning  at mature date (만기상환확률) 
+mat_prob= mat_freq/n
+
+# probability of  Dummy   at mature date (보너스 받을 학률)
+dummy_freq = pay_off.iloc[:,-1][pay_off.iloc[:,-1] == face* (1+dummy)].count() - mat_freq
+dummy_prob= dummy_freq/n
+
+# probability of loss (낙인쳐서 손실상환될 확률)
+loss_freq= pay_off.iloc[:,-1][(pay_off.iloc[:,-1] < face) & (pay_off.iloc[:,-1] != 0)].count()
+loss_prob= loss_freq/n
+
+# 전체 학률 결과값 반환 
+last_result= mid_prob.to_frame().append([mat_prob, dummy_prob, loss_prob])
+
+# 전체 확률값 Bar chart로 결과 Display
+name = ['6_month', '12_month', '18_month', '24_month','30_month','mature','dummy','loss']
+last_result.index = name
+last_result.plot.bar(rot = 45)  
+   
