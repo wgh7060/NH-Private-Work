@@ -1,0 +1,305 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Sept. 07 14:19:19 2020
+
+@author: NHWM
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import datetime
+import seaborn as sns
+from tqdm import tqdm
+from matplotlib import font_manager, rc, rcParams   
+from NH_backtest import *
+font_name = font_manager.FontProperties(fname="c:/Windows/Fonts/malgun.ttf").get_name()   
+rc('font', family=font_name)   
+rcParams['axes.unicode_minus'] = False
+
+# BSI, PEPI 컨버팅용
+def convert_to_grade(score):
+    if (score >= 6.0):
+        return 'A'
+    elif (score >= 2.0) & (score < 6.0):
+        return "B"
+    elif (score >= -2.0) & (score < 2.0):
+        return "C"
+    elif (score > -6.0):
+        return "D"
+    else:
+        "-"
+def convert_to_grade_pai(score): # adj_PAI에 적용되는 함수임
+    if (score >= 1.0):
+        return 'A'
+    elif (score < -1.0) & (score < 1.0):
+        return "B"
+    elif (score <= -1.0):
+        return "C"
+    else:
+        return "-"
+
+# N기간 후 수익이 낫는지 여부 확인
+def convert_to_counter(score):
+    if score > 1:
+        return "Profit"
+    elif score == 1:
+        return "Even"
+    elif score < 1:
+        return "Loss"
+    else:
+        return "-"
+    
+# 등급이 마이너스인경우 Negative / 플러스인 경우 Positive
+def convert_to_grade_2(score):
+    if score > 1:
+        return "Positive"
+    elif score == 1:
+        return "Neutral"
+    elif score < 1:
+        return "Negative"
+    else:
+        return "-"
+
+
+### 가격매력도를 이용한 수익률 추이보기 
+# 보고서 발표 시점부터 1/3/6/12개월 수익률 보기
+# dataframe = df / price_dataframe = price_table
+def period_return(dataframe, item, months, price_dataframe):
+
+    date_list = dataframe["date"].unique()
+    grade_list = dataframe[item].unique() # FLOAT: -3/ -2 / -1 / 0 / 1 / 2 / 3 / nan
+    dataframe[item].hist() # 점수분포
+     
+    rebalancing_table= pd.DataFrame()
+    df_analysis = pd.DataFrame()
+    rebalanced_list = pd.DataFrame()
+    final_counter_table = pd.DataFrame()
+    for index, period in tqdm(enumerate(date_list)):
+        df_period = dataframe[dataframe['date'] == pd.to_datetime(period)] # 해당 회계일의 종목만을 필터링
+        df_period_price = price_dataframe[(price_dataframe['Symbol'].isin(df_period.index)) & (price_dataframe['Date'] >= pd.to_datetime(period))]
+        # 수익률
+        df_period_return = df_period_price.set_index(["Symbol", "Date"]).groupby(["Symbol"])['Price'].apply(lambda x: np.log(x / x.shift(1)))
+        # 누적수익률
+        cum_prod = df_period_return.groupby(["Symbol"]).apply(lambda x: np.exp(x.cumsum()))
+        
+        ret = pd.concat([df_period_return, cum_prod], axis=1)
+        ret.columns = ["Return", "Cumulative"]
+        
+        # ret테이블에 Price 붙이기
+        ret = price_dataframe.merge(ret, left_on = ['Symbol','Date'], right_index = True, how= 'inner').set_index(["Symbol", "Date"])
+
+        # 1,3,6,12개월 누적수익률 뽑는중
+        t_fwds = [1, 3, 6, 12 ]# , 18, 24]
+        for t_fwd in t_fwds[:]:
+            return_table = ret[ret.index.get_level_values(1) == pd.to_datetime(period) +
+                               pd.DateOffset(months= t_fwd)].reset_index(level= 'Date')
+            df_period["cum_" + str(t_fwd) + "_month"] = df_period.merge(return_table.iloc[:,-1], left_index= True,
+                                                                         right_index= True, how= "inner")["Cumulative"]
+            
+        # N 개월 후의 원금손실 비중 검토
+        for t_fwd in t_fwds:
+            counter_table = ret['Price'][ret.index.get_level_values(1) == pd.to_datetime(period)].reset_index(level= 'Date')
+            future_table = ret['Price'][ret.index.get_level_values(1) == pd.to_datetime(period)
+                                        + pd.DateOffset(months= t_fwd)].reset_index(level= 'Date')
+            merging_table = counter_table.merge(future_table, left_index= True, right_index= True, how= 'left') 
+            df_period[str(t_fwd) + "_month_boolean"] = (merging_table['Price_x'] / merging_table['Price_y']).apply(convert_to_counter)            
+        if item != 'adj_PAI':     
+            df_period[item] = df_period[item].apply(convert_to_grade)
+            df_counter = df_period.copy()
+            df_counter = [df_counter.groupby([item, str(t_fwd) + "_month_boolean"])[str(t_fwd) + "_month_boolean"].count() for t_fwd in t_fwds]
+            df_counter = pd.concat(df_counter, axis= 1)
+        else:
+            df_period[item] = df_period[item].apply(convert_to_grade_pai)
+            df_counter = df_period.copy()
+            df_counter = [df_counter.groupby([item, str(t_fwd) + "_month_boolean"])[str(t_fwd) + "_month_boolean"].count() for t_fwd in t_fwds]
+            df_counter = pd.concat(df_counter, axis= 1)
+        
+        for t_fwd in t_fwds:
+            final_counter = df_counter[str(t_fwd) + "_month_boolean"][df_counter.index.get_level_values(1) == "Profit"].values / df_counter[str(t_fwd) + "_month_boolean"].groupby(df_counter.index.get_level_values(0)).sum()
+            final_counter = final_counter.to_frame()
+            final_counter.loc['Date'] = period
+            final_counter_table = final_counter_table.append(final_counter.T)
+        
+        
+        # POS / NEUT / NEG를 기준으로 나누었을 때 시간흐름별 발생 횟수 보기 
+        final_counter_table_values = list(final_counter_table.columns)
+        final_counter_table_values.remove('Date') 
+        final_counter_table[final_counter_table_values] = final_counter_table[final_counter_table_values].fillna(0).astype("float64")    
+        
+        grade_div = final_counter_table[final_counter_table["Date"] == period].groupby(['Date'])[final_counter_table_values].shift(0)
+        plt.figure(figsize=(12,5))
+        grade_heatmap = sns.heatmap((grade_div.div(grade_div.max(axis=0), axis=1)*10).T, cmap= "RdBu_r",
+                                    cbar= False, annot = grade_div.T, fmt = ".2f")
+        plt.title(item + pd.to_datetime(str(period)).strftime('%y%m%d') + " 등급별 N기간내 상승확률", fontdict = {'fontsize' : 20})
+        plt.tight_layout()
+        grade_heatmap.get_figure().savefig("C:/Users/NHWM/Desktop/해외주식_제로인/output/" + item + "_OCCURENCE/" + item +
+                                           "_" + pd.to_datetime(str(period)).strftime('%y%m%d') + "_grade_div" + ".png")
+        
+        # 타임라인별 기준으로 그룹한 각각의 발생빈도 보기
+        if period == date_list[-1]: # 마지막 date_list가 형성되면 최종적으로 년도별 plot을 생성
+            year_div = final_counter_table.groupby([pd.to_datetime(final_counter_table['Date'].astype(str)).dt.year])[final_counter_table_values].mean()
+            # year_div = year_div.iloc[[1,2,3,0]]
+            plt.figure(figsize=(12,5))
+            year_heatmap = sns.heatmap(year_div.div(year_div.max(axis=1), axis=0),
+                                       cmap= "RdBu_r", cbar= False, annot = year_div, fmt = ".2f")
+            plt.title(item + " 타임라인별 수익발생 확률", fontdict = {'fontsize' : 20})
+            plt.tight_layout()
+            year_heatmap.get_figure().savefig("C:/Users/NHWM/Desktop/해외주식_제로인/output/" + item + "_OCCURENCE/" + item + "_" +
+                                              pd.to_datetime(str(period)).strftime('%y%m%d') + "_year_div_" + ".png")
+            
+            
+        # 년도별
+        if period == date_list[-1]: # 마지막 date_list가 형성되면 최종적으로 년도별 plot을 생성
+            year_div = df_analysis.groupby([pd.to_datetime(df_analysis['date'].astype(str)).dt.year, item])[months].mean()
+            year_div.reset_index(inplace= True)
+            year_table = pd.DataFrame()
+            for col in year_div.columns[3:]:
+                year_table = year_div.pivot(index= 'date', columns= item, values= col)
+                plt.figure(figsize=(12,5))
+                year_heatmap = sns.heatmap(year_table.div(year_table.max(axis=1), axis=0)*10,
+                                           cmap= "RdBu_r", cbar= False, annot = year_table, fmt = ".2f")
+                plt.title(item + " 년도별 " + col + " 수익률", fontdict = {'fontsize' : 20})
+                plt.tight_layout()
+                year_heatmap.get_figure().savefig("C:/Users/NHWM/Desktop/해외주식_제로인/output/" + item + "/" + item + "_" +
+                                                  pd.to_datetime(str(period)).strftime('%y%m%d') + "_year_div_" + col + ".png")
+
+        
+        '''
+        for t_fwd in t_fwds:    
+            q = df_counter.groupby(['date', df_counter.index.get_level_values(0), df_counter.index.get_level_values(1)])[str(t_fwd) + "_month_boolean" ].sum().unstack()
+            q = q.assign(total = q.sum(1)).stack()
+        '''
+
+        # 리밸런싱(기간별) 수익률 구하기
+        if period != date_list[-1]:
+            rebalancing_table = ret['Cumulative'][ret.index.get_level_values(1) == date_list[index + 1]]
+            df_period[["R_date", "R_return"]] = df_period.merge(rebalancing_table.reset_index("Date") , left_index= True,
+                                                                right_on= "Symbol", how= "inner")[["Date", "Cumulative"]]
+        else:
+            pass
+    
+        
+        df_analysis = df_analysis.append(df_period)
+        df_analysis.index.name = "Symbol"
+        
+        # 등급별
+        grade_div = df_period.groupby([item])[months].median()
+        plt.figure(figsize=(12,5))
+        grade_heatmap = sns.heatmap((grade_div.div(grade_div.max(axis=0), axis=1)*10).T, cmap= "RdBu_r",
+                                    cbar= False, annot = grade_div.T, fmt = ".2f")
+        plt.title(item + " 등급별 기간 수익률", fontdict = {'fontsize' : 20})
+        plt.tight_layout()
+        grade_heatmap.get_figure().savefig("C:/Users/NHWM/Desktop/해외주식_제로인/output/" + item + "/" + item +
+                                           "_" + pd.to_datetime(str(period)).strftime('%y%m%d') + "_grade_div" + ".png")
+        '''
+        # 업종별
+        sector_div = df_period.groupby(["FnGuide Industry Group", item])[months].median()
+        sector_div.reset_index(inplace= True)
+        sector_table = pd.DataFrame()
+        for col in sector_div.columns[2:]:
+            sector_table = sector_div.pivot(index= 'FnGuide Industry Group', columns= item, values= col)
+            plt.figure(figsize=(12,5))
+            sector_heatmap = sns.heatmap(sector_table.div(sector_table.max(axis=1), axis=0)*10,
+                                         cmap= "RdBu_r", cbar= False, annot = sector_table, fmt = ".2f")
+            sector_heatmap = sns.heatmap(sector_table.div(sector_table.max(axis=1), axis=0),
+                                         cmap= "RdBu_r", cbar= False, annot = sector_table, fmt = ".2f")
+            plt.title(item + " 업종별 " + col + " 수익률", fontdict = {'fontsize' : 20})
+            plt.tight_layout()
+            sector_heatmap.get_figure().savefig("C:/Users/NHWM/Desktop/해외주식_제로인/output/" +item + "/" + item + "_" +
+                                                pd.to_datetime(str(period)).strftime('%y%m%d') + "_sector_div_" + col  + ".png")
+        '''
+        # 년도별
+        if period == date_list[-1]: # 마지막 date_list가 형성되면 최종적으로 년도별 plot을 생성
+            year_div = df_analysis.groupby([df_analysis['date'].dt.year, item])[months].median()
+            year_div.reset_index(inplace= True)
+            year_table = pd.DataFrame()
+            for col in year_div.columns[3:]:
+                year_table = year_div.pivot(index= 'date', columns= item, values= col)
+                plt.figure(figsize=(12,5))
+                year_heatmap = sns.heatmap(year_table.div(year_table.max(axis=1), axis=0)*10,
+                                           cmap= "RdBu_r", cbar= False, annot = year_table, fmt = ".2f")
+                plt.title(item + " 년도별 " + col + " 수익률", fontdict = {'fontsize' : 20})
+                plt.tight_layout()
+                year_heatmap.get_figure().savefig("C:/Users/NHWM/Desktop/해외주식_제로인/output/" + item + "/" + item + "_" +
+                                                  pd.to_datetime(str(period)).strftime('%y%m%d') + "_year_div_" + col + ".png")
+                
+                # 산출물을 가지고 리밸런싱 누적 수익률 구하기
+                ## 1. 각 리밸런싱 기간마다 속하는 등급의 누적수익률의 평균 구하기
+                a = df_analysis.copy()
+                a['PEPI'] = a['PEPI']
+                a = a.groupby(["R_date", "PEPI"])["R_return"].median()
+                ## 2. 등급별로 리밸런싱 포인트를 곱하여서 기간 누적 수익률 구하기
+                b = a.groupby(["PEPI","R_date"]).cumprod()
+                ## 3. 산출물 시각화
+                c = b.reset_index().pivot(index = "R_date", columns = "PEPI", values = "R_return")
+                plt.figure(figsize=(12,5))
+                plt.plot(c, alpha= 0.8)
+                plt.title(item + " 리밸런싱 발생 누적 수익률", fontdict= {'fontsize' : 20})
+                plt.legend(c.columns, loc= "upper right")
+                plt.tight_layout()
+                plt.savefig("C:/Users/NHWM/Desktop/해외주식_제로인/output/" + item + "/" + item + "_" +
+                            pd.to_datetime(str(period)).strftime('%y%m%d') + "_rebalanced_return_" + col + ".png")
+        else:
+            pass
+        
+    return df_analysis
+
+    '''    
+    df_period[df_period['symbol1'] == 'A002170']
+    df_period_return[df_period_return.index.get_level_values(0) == "A002170"]    
+    return_table.reset_index()[return_table.reset_index()['Symbol'] == "A002170"]
+    '''
+
+if __name__ == "__main__":
+    df_raw = pd.read_csv("C:/Users/NHWM/Desktop/해외주식_제로인/nh_BSI_PEPI제공 2014-2018.csv")
+    df_price = pd.read_excel("C:/Users/NHWM/Desktop/해외주식_제로인/제로인_가격데이터_20200907.xlsx", header= [8], encoding= "euc-kr")
+    sector_table = pd.read_excel("C:/Users/NHWM/Desktop/해외주식_제로인/업종분류_20200908.xlsx", header= 5, encoding= 'euc-kr')
+    
+    """
+        "PEPI" : "이익증가율이라면 성장성 컨셉이 맞지",
+        "BSI" : "수익성",
+        "crash_score" : "안정성",
+        "adj_PAI" : "가격매력도"
+    """
+    
+    ## 데이터 전처리
+    df = df_raw.copy()
+    df["symbol1"] = "A" + df["symbol1"].astype(str).str.rjust(6, "0")
+    
+    month_name = ["may", "aug", "nov", "apr"]
+    month_number = ["05", "08", "11", "04"]
+    month = dict(zip(month_name, month_number))
+    
+    # Using loop + replace()
+    temp = []
+    for key, val in month.items():
+        
+        for i in range(len(df['date'])):
+            
+            if key in df['date'].iloc[i]:
+                df['date'].iloc[i] = df['date'].iloc[i].replace(key, val)
+                
+    yyyymmdd = df['date'].str[4:] + df['date'].str[2:4] + df['date'].str[:2]
+    df["date"] = pd.to_datetime(yyyymmdd)
+    df.set_index("symbol1", inplace= True)
+    
+    price_table = df_price[5:]
+    price_table = price_table.set_index("Symbol")
+    price_table = price_table.T.stack().astype("float64")
+    price_table = price_table.reset_index().rename(columns = {"level_0" : "Symbol", "Symbol" : "Date", 0 : "Price"})
+    
+    sector_classifier = sector_table.copy()
+    sector_classifier.set_index("Symbol", inplace= True)
+    
+    df = df.merge(sector_classifier['FnGuide Industry Group'], left_index= True, right_index= True, how= 'inner')
+    # df[~df['symbol1'].isin(df2['symbol1'])] # A032040, 이런거 없음
+        
+    items= ['PEPI', 'BSI', 'crash_score','adj_PAI'] 
+    months = ['cum_1_month','cum_3_month', 'cum_6_month', 'cum_12_month']
+    for item in items:
+        period_return(df, item, months, price_table)
+    
+
+    
+
