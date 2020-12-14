@@ -1,0 +1,674 @@
+import pandas as pd     
+import numpy as np          
+from dateutil.relativedelta import relativedelta     
+import os     
+import matplotlib.pyplot as plt     
+import cx_Oracle    
+import socket  
+import requests   
+from matplotlib.gridspec import GridSpec     
+from datetime import datetime, timedelta     
+from dateutil import parser    
+from tqdm import tqdm   
+import matplotlib.pyplot as plt  
+import re 
+
+class MsgSender: 
+    def __init__(self): 
+        self.url = "http://172.20.3.110:8010/sendMessage" 
+        self.headers = {'Content-type': 'application/json'} 
+
+    def send(self, receiver_ids, text, message_class="5"): 
+        # strSenderID : 발신자 ID 
+        # strSenderName : 발신자 명 
+        # strSenderDesc : 발신자 상세 설명 
+        # strReceiverIDs : 수신자 아이디, 탭 또는 스페이스로 구분 
+        # strContext : 전송 내용 
+        # base64 : base64 encoding 여부, true, false로 지정 
+        # textType : 텍스트 포멧 지정(1 : HTML, 0 : 텍스트) 
+        # messageClass : 전송 메세지 타입 구분 (1 : 일반쪽지, 5 : 긴급쪽지) 
+        datas = {"strSenderID": "SM032", "strSenderName": "RA 전략", "strReceiverIDs": receiver_ids, "strContext": text, "base64": False, 
+                 "textType": "1", "messageClass": message_class} 
+        rsp = requests.post(self.url, json=datas, headers=self.headers) 
+        return rsp 
+
+# D-5409 화면 인풋코드   
+def data_upload_and_preprocess(master_file, input_file, base_date):   
+    DB_raw_file  = pd.read_csv("./" + input_file + ".csv", encoding= "utf-8", header= [5])   
+    remove_comma_list = DB_raw_file.loc[:, DB_raw_file.columns.isin(['Symbol', 'Name', '시장구분', 'FnGuide Sector', 'FnGuide Industry Group']) == False].columns 
+    DB_raw_file[remove_comma_list] = DB_raw_file[remove_comma_list].stack().str.replace(",", "").unstack() 
+     
+    df_master = pd.read_csv("./" + master_file + ".csv", encoding= "utf-8")   
+    df_master.loc[(df_master["정렬"] == '내림'), '정렬'] = False # ascending is False   
+    df_master.loc[(df_master["정렬"] == '오름'), '정렬'] = True # ascending is True   
+    df_master = df_master.set_index("아이템명 영문")   
+     
+    sequence = ["", ".1", ".2", ".3", ".4"]    
+       
+    # 유동비율 구하기   
+    current_ratio = ((DB_raw_file['유동자산(천원)' + seq].astype("float64") /  
+                                  DB_raw_file['유동부채(천원)' + seq].astype("float64")) * 100 for seq in sequence)  
+    current_ratio = pd.concat(current_ratio, axis = 1)   
+    for i in range(len(current_ratio.columns)):   
+        current_ratio.rename(columns = {current_ratio.columns[i] : "유동비율" + sequence[i]}, inplace = True)   
+    current_ratio = current_ratio.round(2) 
+    DB_raw_file = pd.concat([DB_raw_file, current_ratio], axis=1)   
+       
+    # 현금비율 구하기    
+    cash_ratio = ((DB_raw_file['현금및현금성자산(천원)' + seq].astype("float64") / 
+                               DB_raw_file['유동부채(천원)' + seq].astype("float64")) * 100 for seq in sequence)   
+    cash_ratio = pd.concat(cash_ratio, axis = 1)   
+    for i in range(len(cash_ratio.columns)):   
+        cash_ratio.rename(columns = {cash_ratio.columns[i] : "현금비율" + sequence[i]}, inplace = True)   
+    cash_ratio = cash_ratio.round(2) 
+    DB_raw_file = pd.concat([DB_raw_file, cash_ratio], axis=1)   
+       
+    DB_raw_file.rename(columns= dict(zip(DB_raw_file.columns, df_master.index)), inplace= True)   
+       
+    # 회계일자를 인서트, 우선 회계일자를 오늘로 설정    
+    DB_raw_file["Date"] = base_date 
+       
+    # 시장구분의 KOSDAQ를 KSQ 3글자로 변경   
+    DB_raw_file['Market'].replace("KOSDAQ", "KSQ", inplace = True)   
+            
+    # 스팩주들 제거 (제거된 스펙주들은 "평가불가"와 같은 타이틀로 정할수 있을듯)    
+    remove = [name for name in DB_raw_file["Name"] if "스팩" in name]     
+    df_bool = DB_raw_file["Name"].isin(remove)     
+    DB_raw_file = DB_raw_file[df_bool != True]   
+
+    # 재무비율만 필요하므로 불필요한 유동자산 / 현금및 현금성자산 / 유동부채 제거    
+    unnecessaries = ["유동자산", "현금및현금성자산", "유동부채", "종가"]   
+    for unnecessary in unnecessaries:   
+        tmp = [name for name in DB_raw_file.columns if unnecessary not in name]   
+        df_bool = DB_raw_file.columns.isin(tmp)   
+        DB_raw_file = DB_raw_file[DB_raw_file.columns[df_bool == True]]   
+        del [tmp]   
+           
+    insert_file = DB_raw_file.melt(id_vars= ["Date", 'Symbol', 'Name']) #.sort_values("종목코드")   
+       
+    # 데이터 전처리    
+    items = ['흑전', 'N/A(IFRS)', '당기잠식', '전기잠식', np.inf]   
+    items_2 = ['적지', '적전', '잠식지속', '완전잠식']   
+    # insert_file[insert_file['variable'] == 'CASHR1QR'] 
+    insert_file.loc[insert_file['value'].isin(items), 'value'] = 0   
+    insert_file.loc[insert_file['value'].isin(items_2), 'value'] = -100   
+    insert_file.loc[insert_file['value'].isnull(), 'value'] = "_"     
+     
+    temp = [] 
+    for item in insert_file['variable']: 
+        tmp = df_master['아이템명'].loc[item] 
+        temp.append(tmp) 
+    insert_file['ecetra_1'] = temp     
+    insert_file = insert_file.loc[:, ['Date', 'Symbol', 'variable', 'Name', 'value', 'ecetra_1']] 
+    insert_file.to_csv("./" + "5409_input_file" + datetime.today().strftime("%Y%m%d") + ".csv", encoding = "utf-8")   
+       
+    return insert_file, df_master   
+
+def get_quantile(df_info, target_column, quantile_count):     
+    df_tmp = pd.DataFrame()   
+    df_tmp["Market_group"] = pd.qcut(df_info[target_column].astype("float64"), q = quantile_count, labels = np.arange(10, 0, -1))   
+    return df_tmp   
+
+def convert_to_grade(score):   
+    if (score > 80):   
+        return 'A'   
+    elif (score > 60) & (score <= 80):   
+        return 'B'   
+    elif (score > 40) & (score <= 60):   
+        return 'C'   
+    elif (score > 20) & (score <= 40):   
+        return 'D'   
+    elif (score > 0) & (score <= 20):   
+        return 'E'   
+    else:   
+        return "_"   
+
+# input_date = '20200331' / 마감일을 기준으로 바뀐다고는 했지만 실제로 에프엔가이드 쪽에서 언제 데이터 업데이트를 진행하는지 알아볼 필요는 있음 
+def date_maker(input_date): 
+    # date = pd.datetime.today().strftime("%m/%d") 
+    current_year = pd.to_datetime(input_date).year 
+    # 이 범위안에 해당하면 작년 3Q값이 맨 앞으로 나옴 3Q-2Q-1Q-4Q 
+    if input_date in pd.date_range(start= str(current_year) + '-01-01', end= str(current_year) + '-03-30'): 
+        return (str(current_year - 1) + '0930'), '3Q' 
+    # 이 범위안에 해당하면 작년 4Q값이 맨 앞으로 나옴 4Q-3Q-2Q-1Q 
+    elif input_date in pd.date_range(start= str(current_year) + '-03-31', end= str(current_year) + '-05-14'): 
+        return (str(current_year - 1) + '1231'), '4Q' 
+    # 이 범위안에 해당하면 금년 1Q값이 맨 앞으로 나옴 1Q-4Q-3Q-2Q 
+    elif input_date in pd.date_range(start= str(current_year) + '-05-15', end= str(current_year) + '-08-13'): 
+        return (str(current_year) + '0331'), '1Q' 
+    # 이 범위안에 해당하면 금년 2Q값이 맨 앞으로 나옴 2Q-1Q-4Q-3Q 
+    elif input_date in pd.date_range(start= str(current_year) + '-08-14', end= str(current_year) + '-11-15'): 
+        return (str(current_year) + '0630'), '2Q' 
+    # 11-15일 이후 와 12-31일 까지의 경우의 수  
+    else: 
+        return (str(current_year) + '0930'), '3Q' 
+     
+# D-5410 산출값 모듈   
+def get_5410_output(dataframe):   
+     
+    df_temp = process_data.copy()  
+    df_temp = df_temp.set_index(["Date","Symbol","Name","Variable"]).unstack("Variable")   
+    df_temp.columns = df_temp.columns.get_level_values(1)   
+       
+    to_float_list = list(dict_columns.keys())   
+    to_float_list.append("Market_cap")   
+    to_float_list = [each for each in to_float_list if each in df_temp.columns] # 마스터 테이블에 존재하는 컬럼만 사용  
+    df_temp[to_float_list] = df_temp[to_float_list].replace('_', np.nan) 
+     
+    # 기존에 FnGuide에서 제공받지 못한 분기별 데이터는 Annual 데이터로 대체하여 점수 산출에 이상이 없게 함  
+    column_list = ['CASHR', 'CR', 'DR', 'EBT', 'EH', 'GRC', 'GRPE', 'GRS', 'GRT', 'OPM', 'ROE'] 
+    sequence = ["1QR", "2QR", "3QR", "4QR"] 
+     
+    replace_dict = {} 
+    replace_column_list = []  
+    for col in column_list: 
+        standard_column = col + '1YR'  
+        replace_column_list = [col + seq for seq in sequence] 
+        replace_dict.update(zip([standard_column], [replace_column_list])) 
+
+    for key, val in replace_dict.items(): 
+        data_replace(df_temp, key, val) 
+     
+    df_temp[to_float_list] = df_temp[to_float_list].astype("float64")   
+    df_temp = df_temp.merge(get_quantile(df_temp, "Market_cap", 10), left_index = True, right_index = True, how = 'inner')   
+       
+    output_table = pd.DataFrame()   
+    for col in dict_columns.keys():   
+        for target_group in target_group_list:   
+            if col in df_temp.columns:   
+                practice = get_group_data(df_temp, col, target_group, dict_columns[col])   
+            else:   
+                pass   
+            output_table  = output_table.append(practice)  
+             
+    # 아이템의 Industry + Market_group 세 개를 합하여 평균을 구함 
+    group_average = output_table.groupby(["Symbol", "Item"])["Percentile"].mean().reset_index()   
+    group_average.rename(columns = {"Percentile" : "Group_avg_score"}, inplace = True)   
+               
+    output_table = pd.merge(output_table, group_average, on = ["Symbol", "Item"], how= 'inner')   
+     
+    temp = [] 
+    for item in output_table['Item']: 
+        tmp = df_master['중분류'].loc[item] 
+        temp.append(tmp) 
+    output_table['Factor'] = temp  
+    output_table['Factor'].replace({'성장성' : 'Growth', '수익성' : 'Profitability', '안정성' : 'Stability'}, inplace = True) 
+     
+    process_output = output_table.loc[:, ["Date", "Symbol", "Factor", "Classification", "Item", "Market_group", "Name", "Market" , "Sector", "Industry",   
+                                          "Raw_data", "Rank", "Total_number", "Removal_number", "Weight_avg", "Percentile", "Overall_rank_score",    
+                                          "Group_avg_score", 'ecetra_1']].round(2)   
+    process_output['Market_group'] = process_output['Market_group'].cat.add_categories(0)    
+    process_output = process_output.fillna(0)   
+     
+    temp = [] 
+    for item in process_output['Item']: 
+        tmp = df_master['아이템명'].loc[item] 
+        temp.append(tmp) 
+    process_output['ecetra_1'] = temp  
+     
+    process_output.to_csv("./" + "5410_input_file" + datetime.today().strftime("%Y%m%d") + ".csv", encoding = "utf-8")   
+       
+    return process_output   
+
+# df_replace = df_temp / standard_column = 'CASHR1YR' / replace_columns = ['CASHR1QR', 'CASHR2QR', 'CASHR3QR', 'CASHR4QR']  
+def data_replace(df_replace, standard_column, replace_columns): 
+    
+    for each in replace_columns: 
+        df_replace[each] = df_replace[each].fillna(df_replace[standard_column]) 
+     
+    return df_replace 
+     
+
+# df_info = df_temp / target_column = 'OPM1QR' / target_group = 'Market_group' / ascend_order = False 
+def get_group_data(df_info, target_column, target_group, ascend_order):   
+    df_tmp = pd.DataFrame()   
+    vital_info = df_master.index[df_master["중분류"] == "공통"].tolist()   
+    vital_info = [ele for ele in vital_info if ele not in ["Name", "종가"]]   
+    vital_info.append("Market_group")   
+    df_tmp = df_info[vital_info]   
+    # df_tmp[target_column] = df_info[target_column]   
+    df_tmp = pd.concat([df_tmp.reset_index(), pd.DataFrame(df_info[target_column]).melt(value_vars= target_column, var_name = "Item", value_name = "Raw_data")], axis = 1)   
+    df_tmp.set_index(["Date","Symbol","Name"], inplace = True)   
+       
+    nan_group = df_info[df_info[target_column].isnull()] # 값이 없는애들   
+    df_info = df_info.loc[df_info.index.difference(nan_group.index)]   
+     
+    # Market_group / Industry 
+    df_tmp["Classification"] = target_group   
+    df_tmp["Rank"] = df_info.groupby(target_group)[target_column].rank(ascending = ascend_order).astype("int")   
+       
+    count = df_info.groupby(target_group)[target_column].count()     
+    count.rename("Total_number", inplace = True)   
+    count = pd.DataFrame(count)   
+    df_tmp["Total_number"] = pd.merge(df_info, count, left_on = target_group, right_index = True, how ='inner')["Total_number"]   
+
+    out_count = nan_group.groupby(target_group)[target_column].size()     
+    out_count.rename("Removal_number", inplace = True)     
+    out_count = pd.DataFrame(out_count)     
+    df_tmp["Removal_number"] = pd.merge(df_info, out_count, left_on = target_group, right_index = True, how ='inner')["Removal_number"]    
+
+    cap_sum = df_info.groupby(target_group)["Market_cap"].sum()   
+    cap_sum.rename("Market_aggregate", inplace = True)   
+    cap_sum = pd.DataFrame(cap_sum)   
+    df_info["Market_aggregate"] = pd.merge(df_info, cap_sum, left_on = target_group, right_index = True, how = 'inner')["Market_aggregate"]   
+    df_info["Market_weight"] = (df_info['Market_cap'] / df_info["Market_aggregate"])   
+      
+    '''   
+    grouped = df_info.groupby(target_group)     
+    weighted_avg_func = lambda g: np.average(g[target_column], weights = g["시가총액비중"])     
+    weight_mean = grouped.apply(weighted_avg_func)     
+    '''   
+       
+    weight_mean = df_info.groupby(target_group).apply(lambda g: np.average(g[target_column], weights = g["Market_weight"]))   
+    weight_mean.rename("Weight_avg", inplace = True) 
+     
+    # 가중평균이란 업종/시가총액 그룹내의 평균치를 말하는것임   
+    weight_mean = pd.DataFrame(weight_mean)     
+    df_tmp["Weight_avg"] = pd.merge(df_info, weight_mean, left_on=target_group, right_index=True, how='inner')["Weight_avg"]    
+    df_tmp["Percentile"] = (df_info.groupby(target_group)[target_column].rank(ascending = not ascend_order, pct = True, method = "min") * 100).round(2)   
+     
+    # D-5410 "그룹내점수"에 인서트되는 정보 (구하는방법: 전체시장종목의 단순한 rank를 구하는 것)   
+    df_tmp["Overall_rank_score"] = (df_tmp["Raw_data"].rank(ascending = not ascend_order, pct= True) * 100).round(2) 
+       
+    df_tmp = df_tmp.reset_index()   
+       
+    return df_tmp    
+
+# D-5411 산출값 모듈   
+# df_temp = final_data.copy() 
+def get_5411_output(dataframe, filing_periods):   
+
+    df_temp = dataframe.copy()   
+       
+    key_values = df_temp.columns.tolist()   
+    key_values = [elem for elem in key_values if elem not in ['Overall_rank_score', 'Classification', 'Percentile']]   
+       
+    # 전체기업 점수를 row값으로 쌓기 위해서 전처리하는 과정 
+    tmp = df_temp.melt(id_vars = key_values, value_vars = 'Overall_rank_score', var_name = 'Classification', value_name = 'Percentile')   
+    tmp_bool = tmp.duplicated()   
+    tmp = tmp[tmp_bool == False]   
+    # 전처리 후 더 이상 필요없는 Overall_rank_score는 drop 
+    df_temp = df_temp.append(tmp).drop('Overall_rank_score', axis = 1)   
+    # df_temp[df_temp.isin(tmp).all(axis = 1) == True]   
+       
+    df_temp.reset_index(inplace = True, drop= True)   
+     
+    ''' 
+    Factor = []   
+    for i in df_temp.index:   
+        for j in dict_columns.keys():       
+            if (df_temp['Item'][i] == j):   
+                Factor.append(dict_columns[j])   
+                # df_temp.loc[i,'Factor'] = dict_columns[j]   
+            else:   
+                pass   
+    df_temp['Factor'] = df_temp['Factor'] = np.array(Factor) 
+    df_temp['Factor'].replace({'성장성' : 'Growth', '수익성' : 'Profitability', '안정성' : 'Stability'}, inplace = True)  
+    ''' 
+      
+    df_temp.sort_values(['Symbol', 'Item', 'Classification'], inplace = True)   
+     
+    """ 
+    filing_date = []   
+    for val in tqdm(df_temp['Item']):   
+        for dict_key, dict_val in filing_periods.items():   
+            if dict_key in val:  
+                filing_date.append(filing_periods[dict_key]) 
+                # df_temp[(df_temp['Item'] == val) & (df_temp['Date'] == dict_val)] 
+            else:   
+                pass 
+    df_temp['Date'] = filing_date  
+    """ 
+    df_tmp = pd.DataFrame() 
+    for key in list(filing_periods):     
+        ids_1 = df_temp['Item'].str.contains(key) 
+        df_tmp = df_tmp.append(df_temp[ids_1])            
+    ids_2 = df_temp['Item'].str.contains('PR1YR') 
+    df_temp = df_tmp.append(df_temp[ids_2])  
+         
+    final_aggregate = pd.DataFrame()   
+    for period in filing_periods.values():   
+        df_final = df_temp[(df_temp['Date'] == period) | (df_temp['Item'] == 'PR1YR')]           
+           
+        # 종목별 Factor + Classification으로 나눈 평균 점수를 나타냄: A000020+Growth+Industry: 45 / A000020+Growth+Market_group: 50 / A000020+Growth+Industry: 42 / A000020+Profitability+Industry: 42   
+        average_score = (df_final.groupby(['Symbol', 'Factor', 'Classification'])['Percentile'].mean()).round(2)   
+        average_score.rename("Average_score", inplace = True)   
+        average_score = pd.DataFrame(average_score).reset_index() 
+        average_score['Date'] = period 
+         
+        df_final = df_final.merge(average_score, left_on = ['Date', 'Symbol', 'Factor','Classification'], 
+                                  right_on = ['Date', 'Symbol', 'Factor', 'Classification'], how = 'right')  
+         
+        # Key 값이 중복되는 값들은 제거 (이 단계부터는 Item의 이름은 신경쓸 필요가없음)    
+        needless = df_final[['Date', 'Symbol', 'Market_group', 'Factor', 'Classification']].duplicated()   
+        df_final = df_final[needless == False]  
+         
+        # Classification으로 나눈 평균점수를 나타냄 --> 즉 이게, 종합점수의 개별 전체기업/유사시총/동종업종의 점수임 ex. A000020_Industry_65/ A000020_Market_Group_55 / A000020_Overall_rank_score_87 
+        total_score = (df_final.groupby(['Symbol', 'Classification'])['Percentile'].mean()).round(2) 
+        total_score.rename("Total_score", inplace = True) 
+        total_score = pd.DataFrame(total_score).reset_index() 
+        total_score['Total'] = 'Total' 
+        total_score['Date'] = period 
+         
+        df_final = df_final.merge(total_score, left_on = ['Date', 'Symbol', 'Classification'], 
+                                  right_on = ['Date', 'Symbol', 'Classification'], how = 'left') 
+        df_final.drop(columns = ['Percentile'], inplace = True) 
+         
+        # total스코어 멜팅작업 진행 
+        df_total = df_final.melt(value_vars= 'Total_score', var_name = 'Factor', value_name = 'Total', id_vars= ['Date', 'Symbol', 'Market_group', 'Classification', 'Industry', 'Market', 'Name', 'Sector']) 
+        needless = df_total[['Symbol', 'Factor', 'Total']].duplicated() 
+        df_total = df_total[needless == False] 
+        df_total.rename(columns= {'Total' : "Average_score"}, inplace = True) 
+         
+        # 총 12가지의 점수가 나옴. 종합점수 4개가 더 들어가면됨 
+        df_final = pd.concat([df_total, df_final], axis = 0, join='inner').sort_values(["Date", 'Symbol', 'Market_group', 'Factor', 'Classification']) 
+         
+        # 각 period별 Factor의 Classification을 합한 평균점수를 구함   
+        factor_avg_score = df_final.reset_index().groupby(['Date', 'Symbol', 'Factor'])['Average_score'].mean().round(2) 
+        factor_avg_score.rename('Factor_avg_score', inplace = True)   
+        factor_avg_score = pd.DataFrame(factor_avg_score).reset_index()   
+         
+        df_final = df_final.merge(factor_avg_score, left_on = ['Date', 'Symbol', 'Factor'],   
+                right_on = ['Date', 'Symbol', 'Factor'], how = 'right')     
+         
+        # 중복되는 key값이 있는지 확인하고 있다면 해당 값들을 제거    
+        needless = df_final[['Date', 'Symbol', 'Market_group', 'Factor', 'Classification']].duplicated()   
+        df_final = df_final[needless == False]   
+         
+        final_aggregate = final_aggregate.append(df_final)  
+     
+    # 각 팩터의 Factor_avg_score를 Classification의 Total값으로 melting시킴  
+    combine_total = final_aggregate.melt(id_vars = ['Date', 'Symbol', 'Market_group', 'Factor', 'Industry', 'Market', 'Name', 'Sector'], 
+                                                 value_vars = 'Factor_avg_score', var_name = 'Classification' , value_name = 'Average_score') 
+    needless = combine_total[['Symbol','Factor','Average_score']].duplicated() 
+    combine_total  = combine_total[needless == False]  
+    final_aggregate = pd.concat([final_aggregate, combine_total], axis = 0, join= 'outer').sort_values(["Date", 'Symbol', 'Market_group', 'Factor', 'Classification']) 
+    final_aggregate = final_aggregate.drop(columns= ['Factor_avg_score']) # melting 시켰기에 더 이상 불필요함 
+     
+    # Factor내 개별 Classification (Industry, Market_Group, Overall_rank, Factor_avg_score) 점수에 대한 최고 점수를 구함   
+    highest_score = final_aggregate.groupby(['Date', 'Factor', 'Classification'])['Average_score'].max() 
+    highest_score.rename("Highest_score", inplace = True)   
+    highest_score = pd.DataFrame(highest_score).reset_index()   
+    final_aggregate = final_aggregate.merge(highest_score, left_on = ['Date', 'Factor', 'Classification'],   
+                              right_on = ['Date', 'Factor', 'Classification'], how = 'right') 
+       
+    # Factor내 개별 Classification 점수에 대한 최하 점수를 나타냄   
+    smallest_score = final_aggregate.groupby(['Date', 'Factor', 'Classification'])['Average_score'].min() 
+    smallest_score.rename("Smallest_score", inplace = True)   
+    smallest_score = pd.DataFrame(smallest_score).reset_index()   
+    final_aggregate = final_aggregate.merge(smallest_score, left_on = ['Date', 'Factor', 'Classification'],   
+                              right_on = ['Date', 'Factor', 'Classification'], how = 'right')  
+
+    final_aggregate['Percent_Grade'] = final_aggregate['Average_score'].apply(convert_to_grade)  
+    final_aggregate.rename(columns = {'Average_score' : 'Percentile'}, inplace = True) 
+     
+    Average_score = final_aggregate.groupby(['Date', 'Factor', 'Classification'])['Percentile'].mean().round(2) 
+    Average_score = Average_score.reset_index() 
+    Average_score.rename(columns = {'Percentile' : 'Average_score'}, inplace = True) 
+     
+    final_aggregate = final_aggregate.merge(Average_score, left_on= ['Date', 'Factor', 'Classification'], 
+                                            right_on= ['Date', 'Factor', 'Classification'] , how= 'inner').sort_values(["Date", 'Symbol', 'Market_group', 'Factor', 'Classification']) 
+     
+    # Classification의 Factor_avg_score와 Factor의 Total_score 이름 Total로 통일 
+    final_aggregate['Classification'][final_aggregate['Classification'] == 'Factor_avg_score'] = 'Total' 
+    final_aggregate['Factor'][final_aggregate['Factor'] == 'Total_score'] = 'Total' 
+     
+    """ 
+    # 직전 4분기 성적구하기 
+    final_4_quarters = final_aggregate[final_aggregate['Date'] != str(pd.datetime.today().year) + '0101'] 
+    final_4_quarters = final_4_quarters.sort_values(by = 'Date') 
+     
+    total_grade_bwd1Q = final_4_quarters.groupby(['Symbol', 'Factor', 'Classification'])['Percent_Grade'].shift(1) # 전 분기 
+    total_grade_bwd2Q = final_4_quarters.groupby(['Symbol', 'Factor', 'Classification'])['Percent_Grade'].shift(2) # 전 2분기 
+    total_grade_bwd3Q = final_4_quarters.groupby(['Symbol', 'Factor', 'Classification'])['Percent_Grade'].shift(3) # 전 3분기  
+     
+    Past_4_grades = final_4_quarters['Percent_Grade'] + total_grade_bwd1Q + total_grade_bwd2Q + total_grade_bwd3Q 
+    Past_4_grades = Past_4_grades.to_frame() 
+    Past_4_grades.rename(columns = {'Percent_Grade' : 'ecetra_1'}, inplace = True)  
+     
+    final_aggregate = final_aggregate.merge(Past_4_grades, left_index = True, right_index = True, how = 'outer') 
+     
+    # 직전 4분기 점수 구하기 
+    total_score_bwd1Q = final_4_quarters.groupby(['Symbol', 'Factor', 'Classification'])['Percentile'].shift(1).round().fillna('_') # 전 분기 
+    total_score_bwd2Q = final_4_quarters.groupby(['Symbol', 'Factor', 'Classification'])['Percentile'].shift(2).round().fillna('_') # 전 2분기 
+    total_score_bwd3Q = final_4_quarters.groupby(['Symbol', 'Factor', 'Classification'])['Percentile'].shift(3).round().fillna('_') # 전 3분기  
+     
+    Past_4_scores = round(final_4_quarters['Percentile']).astype(str) + '_' + total_score_bwd1Q.astype(str) + '_' + total_score_bwd2Q.astype(str) + '_' + total_score_bwd3Q.astype(str) 
+    Past_4_scores = Past_4_scores.to_frame() 
+    Past_4_scores.rename(columns = {'Percentile' : 'ecetra_2'}, inplace = True)  
+     
+    final_aggregate = final_aggregate.merge(Past_4_scores, left_index = True, right_index = True, how = 'outer') 
+
+    final_aggregate['ecetra_1'] = final_aggregate['ecetra_1'].replace(np.nan, '_')   
+    final_aggregate['ecetra_2'] = final_aggregate['ecetra_2'].replace(np.nan, '_') 
+    """ 
+  
+    final_aggregate.to_csv("./" + "5411_input_file" + datetime.today().strftime("%Y%m%d") + ".csv", encoding = "utf-8")   
+     
+    return final_aggregate   
+
+if __name__ == "__main__":   
+       
+    # 1단계 : DB연결작업   
+    if socket.gethostname() == 'probont01':   
+        dbconnection = cx_Oracle.connect("apm/papm214! @PRTP", encoding = 'utf-8')  # 운영계정 접속    
+    else:   
+        dbconnection = cx_Oracle.connect("apd/dapd214# @TRTP", encoding = "utf-8") # test서버 접속   
+       
+    database = dbconnection.cursor()   
+    msgSender = MsgSender() 
+    # DB1  : DBM.TRATS_RBSC_EPR_DIGN_IPT   
+    # 데이터 가이드에서 피딩받은 액셀 데이터를 가지고 파이썬으로 전처리한 데이터프레임을 DB1에 (D-5409) 인서트하는 작업   
+    # 2단계: 마스터 테이블과 인풋테이블을 생성. 마스터 테이블은 추후 작접에 사용하고 인풋테이블은 DB1에 넣는데 사용   
+       
+    master_file = "insert_dataframe_master_3Q" 
+    input_file = "insert_dataframe_input_3Q" 
+    input_date = pd.datetime.today().strftime('%Y%m%d') 
+    date, quarter = date_maker(input_date) 
+    # 해당 파일의 전처리 과정은 함수를 따라가면서 보는게 좋을듯 함   
+    insert_file, df_master = data_upload_and_preprocess(master_file, input_file, date)   
+     
+    query = "DELETE from DBM.TRATS_RBSC_EPR_DIGN_IPT WHERE FCL_DT = " + "'" + date + "'"   
+    database.execute(query)   
+    dbconnection.commit()  
+     
+    query = '''   
+        INSERT INTO   
+            DBM.TRATS_RBSC_EPR_DIGN_IPT   
+            (FCL_DT, IEM_CD, PRA_ID, IEM_NM, PRA_VL_CTS, RKS_1_CTS,   
+            RGS_DT, RGS_TM, RGS_TAB_CD, RGS_EMP_NO, RGS_TRM_NO)   
+        VALUES   
+            '''    
+     
+    try : 
+        for index in tqdm(range(len(insert_file))): 
+            values = (datetime.strptime(insert_file.iloc[index]['Date'], "%Y%m%d").strftime("%Y%m%d"), 
+                              insert_file.iloc[index]['Symbol'], insert_file.iloc[index]['variable'], 
+                              insert_file.iloc[index]['Name'], insert_file.iloc[index]['value'], insert_file.iloc[index]['ecetra_1'], 
+                              datetime.today().strftime("%Y%m%d"), datetime.now().time().strftime("%H%M%S%f")[:-4], '9999', '64645', 'SYSTEM')     
+            insert_values = query + str(values)   
+           
+            # D-5409에 인풋 데이터 업로드 시킴   
+            database.execute(insert_values)   
+        dbconnection.commit() 
+        ret = msgSender.send("64645", "<b>" + pd.datetime.today().strftime("%Y-%m-%d") + " 기업장기모형 D-5409 업로드가 정상적으로 작동 하였습니다" + "</b>") 
+         
+    except Exception as e : 
+        ret = msgSender.send("64645", "<b>" + pd.datetime.today().strftime("%Y-%m-%d") + " 기업장기모형 D-5409 업로드 오류발생, 수작업이 필요합니다" + "</b>") 
+     
+    print(datetime.now().time().strftime("%H:%M:%S:%f")[:-4] + "<end_main>")  
+     
+    # 3단계: DB1을 불러와서 업종별, 단계별 순위와 가중치를 구하는 작업   
+    process_data = pd.DataFrame()   
+    query = '''   
+            SELECT FCL_DT, IEM_CD, PRA_ID, IEM_NM, PRA_VL_CTS 
+            FROM   DBM.TRATS_RBSC_EPR_DIGN_IPT   
+            WHERE  FCL_DT = :today   
+            '''   
+    process_data = pd.read_sql(query, con = dbconnection, params = {"today" : date})  
+    # process_data = pd.read_sql(query, con = dbconnection, params = {"today" : (datetime.today() - timedelta(days = 8)).strftime("%Y%m%d")})   
+    # else:   
+    #    process_data = pd.read_csv("./" + "5409_input_file" + datetime.today().strftime("%Y%m%d") + ".csv", encoding = "utf-8")  
+    process_data = process_data.rename(columns = {'variable':'Variable'})  
+  
+    process_data.rename(columns = {"FCL_DT" : "Date", "IEM_CD" : "Symbol", "IEM_NM" : "Name" , "PRA_ID" : "Variable",    
+                                   "PRA_VL_CTS" : "Item"}, inplace = True)    
+       
+    target_columns = df_master.index[df_master["랭크산출여부"] == True].tolist()   
+    orders = df_master['정렬'][df_master["랭크산출여부"] == True].tolist()   
+    dict_columns = dict(zip(target_columns, orders))    
+    target_group_list = ["Market_group", "Industry"]   
+     
+    process_output = get_5410_output(process_data)   
+       
+    # DB2  : DBM.TRATS_RBSC_EPR_DIGN_PGS   
+    # 4단계: 아웃풋을 D-5410에 인서트하는 작업   
+    query = "DELETE from DBM.TRATS_RBSC_EPR_DIGN_PGS WHERE FCL_DT = " + "'" + date + "'"   
+    database.execute(query)   
+    dbconnection.commit()  
+     
+    query = '''   
+        INSERT INTO   
+            DBM.TRATS_RBSC_EPR_DIGN_PGS   
+            (FCL_DT, IEM_CD, SQ1_GRP_ID, SQ2_GRP_ID, SQ3_GRP_ID, GRP_ID, IEM_NM,   
+            RATS_IDX_DIT_CD, FNGD_SER_NM, FNGD_BTP_NM, EAL_HDN_SOR,    
+            GRP_EAL_RNK, GRP_ALL_CNT, GRP_XLS_CNT, GRP_EAL_HDN_AVG_SOR,   
+            GRP_SRV_RT, GRP_EAL_HDN_SOR, EAL_HDN_AVG_SOR, RKS_1_CTS, 
+            RGS_DT, RGS_TM, RGS_TAB_CD, RGS_EMP_NO, RGS_TRM_NO)   
+        VALUES   
+            '''   
+     
+    # 회계일자 / 종목코드 / 지표 / 분류 / 항목 
+    try: 
+        for index in tqdm(range(len(process_output))): 
+            values = (datetime.strptime(process_output.iloc[index]['Date'], "%Y%m%d").strftime("%Y%m%d"), 
+                      process_output.iloc[index]['Symbol'], process_output.iloc[index]['Factor'], 
+                      process_output.iloc[index]['Classification'], process_output.iloc[index]['Item'], 
+                      process_output.iloc[index]['Market_group'], process_output.iloc[index]['Name'], 
+                      process_output.iloc[index]['Market'], process_output.iloc[index]['Sector'], process_output.iloc[index]['Industry'], 
+                      process_output.iloc[index]['Raw_data'], process_output.iloc[index]['Rank'], process_output.iloc[index]['Total_number'], 
+                      process_output.iloc[index]['Removal_number'], process_output.iloc[index]['Weight_avg'], process_output.iloc[index]['Percentile'], 
+                      process_output.iloc[index]['Overall_rank_score'], process_output.iloc[index]['Group_avg_score'], process_output.iloc[index]['ecetra_1'], 
+                      datetime.today().strftime("%Y%m%d"), datetime.now().time().strftime("%H%M%S%f")[:-4], '9999', '64645', 'SYSTEM')     
+            insert_values = query + str(values)   
+          
+            database.execute(insert_values)   
+        dbconnection.commit()   
+        ret = msgSender.send("64645", "<b>" + pd.datetime.today().strftime("%Y-%m-%d") + " 기업장기모형 D-5410 산출이 정상적으로 작동 하였습니다" + "</b>") 
+         
+    except Exception as e: 
+        ret = msgSender.send("64645", "<b>" + pd.datetime.today().strftime("%Y-%m-%d") + " 기업장기모형 D-5410 산출 오류 발생, 수작업이 필요합니다" + "</b>") 
+     
+    print(datetime.now().time().strftime("%H:%M:%S:%f")[:-4] + "<end_main>")  
+     
+    # 5단계: D-5410의 데이터를 불어와서 최종 점수 및 직전 4분기 등급 산출    
+    final_data = pd.DataFrame()   
+    query = '''   
+            SELECT FCL_DT, IEM_CD, SQ1_GRP_ID, SQ2_GRP_ID, SQ3_GRP_ID, GRP_ID, IEM_NM,   
+                   RATS_IDX_DIT_CD, FNGD_SER_NM, FNGD_BTP_NM, EAL_HDN_SOR,   
+                   GRP_SRV_RT, GRP_EAL_HDN_SOR 
+            FROM   DBM.TRATS_RBSC_EPR_DIGN_PGS   
+            WHERE  FCL_DT = :today   
+            '''   
+    # final_data = pd.read_sql(query, con = dbconnection, params = {"today" : datetime.today().strftime("%Y%m%d")})    
+    final_data = pd.read_sql(query, con = dbconnection, params = {"today" : date}) 
+    # else:   
+    #    final_data  = pd.read_csv("./" + "5410_input_file" + datetime.today().strftime("%Y%m%d") + ".csv", encoding = "utf-8")   
+    # GRP_SRV_RT: 아이템별 분류에 속하는 개별 점수 / GRP_EAL_HDN_SOR: raw_data의 전체 순위를 rank매긴 점수 
+    final_data.rename(columns= {'FCL_DT' : "Date", 'IEM_CD' : "Symbol", 'SQ1_GRP_ID' : "Factor", 'SQ2_GRP_ID' : "Classification" ,    
+                                'SQ3_GRP_ID' : "Item", "GRP_ID" : "Market_group", 'IEM_NM' : "Name", 'RATS_IDX_DIT_CD' : "Market",    
+                                'FNGD_SER_NM' : "Sector", 'FNGD_BTP_NM' : "Industry", 'EAL_HDN_SOR' : "Raw_data",   
+                                'GRP_SRV_RT' : "Percentile",  'GRP_EAL_HDN_SOR' : "Overall_rank_score"}, inplace = True)   
+       
+    # 6단계: 최종 산출물 구하는 작업: 1~4분기 모두를 집어넣는 것보다는, 해당 최근연도만 반영해서 넣으면 될듯   
+    # 분기가 넘어갈때마다 Quarter도 같이 움직이는 코드를 심어야됨 
+    """ 
+    filing_periods = dict(zip(list(['1Q', '2Q', '3Q', '4Q', '1Y']),   
+                              list([datetime(datetime.now().date().year, 3, 31).strftime('%Y%m%d'),   
+                                    datetime(datetime.now().date().year, 6, 30).strftime('%Y%m%d'),   
+                                    datetime(datetime.now().date().year - 1, 9, 30).strftime('%Y%m%d'),   
+                                    datetime(datetime.now().date().year - 1, 12, 31).strftime('%Y%m%d'),   
+                                    datetime(datetime.now().date().year , 1, 1).strftime('%Y%m%d')])))   
+    """ 
+
+    filing_periods = dict(zip([quarter], [date])) 
+    final_output = get_5411_output(final_data, filing_periods)  
+
+    # 불필요한 정보이나 인서트 하기위해서 집어넣는 자료 
+    final_output['Factor_avg_score'] =  0.0  
+     
+    # DB3: DBM.TRATS_RBSC_EPR_DIGN_PTO   
+    # 7단계: D-5411에 인서트를 치면서 모든 작업 마무리  
+    for date in final_output['Date'].unique(): 
+        query = "DELETE from DBM.TRATS_RBSC_EPR_DIGN_PTO WHERE FCL_DT = " + "'" + date + "'"   
+        database.execute(query)   
+        dbconnection.commit()  
+     
+    query = '''   
+        INSERT INTO   
+            DBM.TRATS_RBSC_EPR_DIGN_PTO   
+            (FCL_DT, IEM_CD, SQ1_GRP_ID, SQ2_GRP_ID, GRP_ID, IEM_NM,   
+            RATS_IDX_DIT_CD, FNGD_SER_NM, FNGD_BTP_NM, EAL_HDN_SOR,    
+            GRP_EAL_GRD_CTS, GRP_EAL_HDN_HST_SOR, GRP_EAL_HDN_LWS_SOR, GRP_EAL_HDN_AVG_SOR, EAL_HDN_AVG_SOR, 
+            RGS_DT, RGS_TM, RGS_TAB_CD, RGS_EMP_NO, RGS_TRM_NO)  
+        VALUES   
+            '''   
+             
+    try: 
+        for index in tqdm(range(len(final_output))): 
+            values = (datetime.strptime(final_output.iloc[index]['Date'], "%Y%m%d").strftime("%Y%m%d"), 
+                  final_output.iloc[index]['Symbol'], final_output.iloc[index]['Factor'], final_output.iloc[index]['Classification'],  
+                  final_output.iloc[index]['Market_group'], 
+                  final_output.iloc[index]['Name'], final_output.iloc[index]['Market'], final_output.iloc[index]['Sector'],  
+                  final_output.iloc[index]['Industry'], final_output.iloc[index]['Percentile'], final_output.iloc[index]['Percent_Grade'],  
+                  final_output.iloc[index]['Highest_score'], final_output.iloc[index]['Smallest_score'],  
+                  final_output.iloc[index]['Average_score'], final_output.iloc[index]['Factor_avg_score'], 
+                  datetime.today().strftime("%Y%m%d"), datetime.now().time().strftime("%H%M%S%f")[:-4], '9999', '64645', 'SYSTEM')     
+            insert_values = query + str(values)  
+            # D-5411에 인풋 데이터 업로드 시킴   
+            database.execute(insert_values)  
+        dbconnection.commit()   
+        ret = msgSender.send("64645", "<b>" + pd.datetime.today().strftime("%Y-%m-%d") + " 기업장기모형 D-5411 아웃풋 산출이 정상적으로 작동 하였습니다" + "</b>") 
+    except Exception as e: 
+        ret = msgSender.send("64645", "<b>" + pd.datetime.today().strftime("%Y-%m-%d") + " 기업장기모형 D-5411 아웃풋 산출 오류 발생, 수작업이 필요합니다" + "</b>") 
+     
+    print(datetime.now().time().strftime("%H:%M:%S:%f")[:-4] + "<end_main>") 
+
+    database.close()  
+    dbconnection.close() 
+
+    """ 
+    # D-5411 데이터 뽑아보기 
+    d_5411 = pd.DataFrame() 
+    query = '''   
+            SELECT FCL_DT, IEM_CD, SQ1_GRP_ID, SQ2_GRP_ID, GRP_ID, IEM_NM,   
+                   RATS_IDX_DIT_CD, FNGD_SER_NM, FNGD_BTP_NM, EAL_HDN_SOR,   
+                   GRP_EAL_GRD_CTS, GRP_EAL_HDN_AVG_SOR 
+            FROM   DBM.TRATS_RBSC_EPR_DIGN_PTO   
+            WHERE  FCL_DT = :today   
+            '''   
+    d_5411 = pd.read_sql(query, con = dbconnection, params = {"today" : date}) 
+    d_5411.rename(columns= {'FCL_DT' : "Date", 'IEM_CD' : "Symbol", 'SQ1_GRP_ID' : "Factor", 'SQ2_GRP_ID' : "Classification",    
+                                "GRP_ID" : "Market_group", 'IEM_NM' : "Name", 'RATS_IDX_DIT_CD' : "Market",    
+                                'FNGD_SER_NM' : "Sector", 'FNGD_BTP_NM' : "Industry", 'EAL_HDN_SOR' : "Rank",   
+                                'GRP_EAL_GRD_CTS' : "Grade", 'GRP_EAL_HDN_AVG_SOR' : "Average_score"}, inplace = True)   
+     
+    # D-5411 데이터 분포 나타냄  
+    group = pd.DataFrame() 
+    for col_1 in list(d_5411['Factor'].unique()): 
+        for col_2 in list(d_5411['Classification'].unique()): 
+            tester = d_5411[(d_5411['Factor'] == col_1) & (d_5411['Classification'] == col_2)]['Rank'] 
+            plt.figure(figsize = (12,5)) 
+            plt.title("Factor: " + col_1 + ", Classification: " + col_2) 
+            plt.hist(tester, density = True) 
+            plt.savefig("./" + col_1 + "_" + col_2 + "_" + date + ".png") 
+             
+            red = len(tester[tester <= 40]) / len(tester) 
+            green = len(tester[(tester > 41) & (tester <= 60)]) / len(tester) 
+            blue = len(tester[(tester > 61) & (tester <= 100)]) / len(tester) 
+            temp = pd.Series([red, green, blue]) 
+            group = group.append(temp, ignore_index = True) 
+    group.columns = ['red', 'green', 'blue'] 
+    """ 
+
+      
