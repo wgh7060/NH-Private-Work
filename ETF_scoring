@@ -1,0 +1,247 @@
+# -*- coding: utf-8 -*-  
+"""  
+Created on Mon Nov 23 14:02:18 2020  
+
+@author: NHWM  
+"""  
+
+import pandas as pd  
+import numpy as np  
+import matplotlib.pyplot as plt  
+
+def etf_filter(dataframe, mixture_asset, aum, duration, derivatives, transactions):  
+    df = df_etf.copy()  
+    df['설정일'] = pd.to_datetime(df['설정일'], format = "%Y%m%d")  
+      
+    # Filter_1: 혼합자산여부  
+    lists = set(list(name for name in df['유형분류(대)'] if mixture_asset in name))  
+      
+    df_mixture = pd.DataFrame()  
+    for item in lists:  
+        df_mixture = df_mixture.append(df[df['유형분류(대)'] == item])  
+    a = df.loc[df.index.difference(df_mixture.index)]  
+      
+    # Filter_2 : AUM   
+    df_aum_filter = df[df['AUM (연결)(원)'] <= aum]  
+    a = a.loc[a.index.difference(df_aum_filter.index)]  
+      
+    # Filter_3 : Date  
+    base_date = (pd.datetime.today() - pd.DateOffset(days = duration)).strftime("%Y-%m-%d")  
+    df_duration_filter = df[df['설정일'] > base_date]  
+    a = a.loc[a.index.difference(df_duration_filter.index)]  
+       
+    # Filter_4: Derivatives  
+    derivative_list = []  
+    for derivative in derivatives:  
+        derivative_list.extend(list(name for name in a['Name'] if derivative in name))  
+          
+    df_derivatives = pd.DataFrame()  
+    for item in derivative_list:  
+        df_derivatives = df_derivatives.append(df[df['Name'] == item])  
+    a = a.loc[a.index.difference(df_derivatives.index)]  
+      
+    # Filter_5 : # of Transactions  
+    df_transaction_filter = df[df['거래량 (60일 평균)(주)'] <= transactions]  
+    df_filtered = a.loc[a.index.difference(df_transaction_filter.index)]  
+      
+    return df_mixture, df_aum_filter, df_duration_filter, df_derivatives, df_transaction_filter, df_filtered  
+      
+# 1차적으로 필터링이 끝난 etf를 가지고 동일한 기초지수를 추종하는 etf중에서 최고의 놈만 선별  
+# 대/중/소분류  
+# dataframe = df_filtered ; dm ; em ; kr   
+def classification_by_markets(dataframe, dm, em, kr):  
+    df = df_filtered.copy() 
+    # df_filtered['유형분류(대)'].unique(): array(['국내주식형', '해외주식형', '국내채권형', '해외대체', '기타형', '해외채권형', '국내대체'], dtype=object)  
+    # 대분류 : Equity / Bond / AI  
+    class_1 = []  
+    for name in df['유형분류(대)']:  
+        if '주식' in name:  
+            word = 'Equity'  
+            class_1.append(word)  
+        elif '채권' in name:  
+            word = 'Bond'  
+            class_1.append(word)  
+        elif '대체' in name:  
+            word = 'AI'  
+            class_1.append(word)  
+        else:  
+            word = '-'  
+            class_1.append(word)  
+    class_1 = pd.Series(class_1).rename("class_1") 
+    class_1.index = df.index 
+    df = pd.concat([df, class_1], axis=1) 
+     
+    # 중분류: 각 자산군(Equity/Bond/AI)별로 유형분류(소)를 이용한 마켓별로 분류작업을 진행 (선진국 / 신흥국 / 국내)  
+    ## Equity 
+    ## equity_only['유형분류(소)'].unique(): array(['인덱스주식코스피200', '인덱스주식섹터', '중국주식', '인덱스주식기타', '일본주식', '중남미주식', 
+    ## '북미주식', '헬스케어섹터', '글로벌주식', '유럽주식', '신흥국주식', '산업재섹터', '인도주식', 
+    ## '에너지섹터', '베트남주식', '기타국가주식', '러시아주식', '멀티/기타섹터', '아시아퍼시픽주식', 
+    ## '정보기술섹터', '인덱스주식KRX300', '소재섹터']    
+     
+    equity_only = df.loc[df['class_1'] == 'Equity']  
+     
+    # 각 시장별로 분류가 제대로 되었는지 확인할 것     
+    dm = equity_only[equity_only['유형분류(소)'].str.contains('|'.join(dm_equity))] 
+    dm['class_2'] = 'Developed_market' 
+    em = equity_only[equity_only['유형분류(소)'].str.contains('|'.join(em_equity))] 
+    em['class_2'] = 'Emerging_market' 
+    kr = equity_only[equity_only['유형분류(소)'].str.contains('|'.join(kr_equity))] 
+    kr['class_2'] = 'Korean_market' 
+    len(equity_only) == len(dm) + len(em) + len(kr) # True 
+     
+    equity_only = dm.append(em) 
+    equity_only = equity_only.append(kr).sort_index() 
+    class_2_equity = equity_only['class_2'] 
+     
+    # Bond : Bond의 편입 목적은 자산배분을 위함이지 기간 스프레드에 따른 수익률이 주목적이 아님 
+    # 그래서, 10년 한국/미국 국고채만 있으면 되고 나머지는 수수료에 녹을 가능성이 높기에 제외 
+    bond_only = df.loc[df['class_1'] == 'Bond'] 
+    bond_only['유형분류(대)'].unique() # 국내채권, 해외채권 2종류 
+     
+    bond_overseas = bond_only[bond_only['유형분류(대)'].str.contains("해외채권")] 
+    bond_overseas['class_2'] = 'Foreign_bond'  
+    bond_korean = bond_only[bond_only['유형분류(대)'].str.contains("국내채권")] 
+    bond_korean['class_2'] = 'Korean_bond'  
+    len(bond_only) == len(bond_overseas) + len(bond_korean) # True 
+
+    bond_only = bond_overseas.append(bond_korean).sort_index()      
+    class_2_bond = bond_only['class_2'] 
+    bond_10yr = bond_only[bond_only['Name'].str.contains('10')] 
+     
+    ## AI:  
+    AI_only = df.loc[df['class_1'] == 'AI']  
+     
+    AI_overseas = AI_only[AI_only['유형분류(대)'].str.contains("해외")] 
+    AI_overseas['class_2'] = 'Foreign_AI'  
+    AI_korean = AI_only[AI_only['유형분류(대)'].str.contains("국내")] 
+    AI_korean['class_2'] = 'Korean_AI'  
+    len(AI_only) == len(AI_overseas) + len(AI_korean)# True 
+     
+    AI_only = AI_overseas.append(AI_korean).sort_index()      
+    class_2_AI= AI_only['class_2'] 
+     
+    class_2 = class_2_equity.append(class_2_bond) 
+    class_2 = class_2.append(class_2_AI).sort_index() 
+     
+    return equity_only, dm, em, kr, bond_only, bond_overseas, bond_korean, bond_10yr, AI_only, AI_overseas, AI_korean 
+
+# ETF 스코어링을 통한 최종 선별작업: 표적지수가 겹치는 애들끼리 경쟁을 시킴 
+# list_of_etfs= AI_in_competition; target_etf_names= AI_target_etfs ;'class_2'; weights= [.2, .2, .2, .4] 
+def etf_scoring(list_of_etfs, target_etf_names, weights):    
+    completion_table = pd.DataFrame() 
+    for name in target_etf_names: 
+        scoring_table = list_of_etfs[list_of_etfs['표적지수'].str.contains(name)] 
+        # 동일 추종지수 etf가 2개 이상인 경우, 스코어링 경쟁시킴. 단일 추종인 경우 해당 인덱스는 스코어링 만점 처리 
+        if len(scoring_table) > 1: 
+            scoring_table['Counts'] = len(scoring_table) 
+            scoring_table['Comp_transaction'] = scoring_table['거래대금 (60일 평균)(원)'].rank(pct = True).round(2) * 100 
+            scoring_table['Comp_AUM'] = scoring_table['AUM (연결)(원)'].rank(pct = True).round(2) * 100 
+            scoring_table['Comp_tracking_err'] = abs(scoring_table['괴리율(%)']).rank(pct = True, ascending = False).round(2) * 100 
+            scoring_table['Comp_fee'] = scoring_table['TER 보수'].rank(pct = True, ascending = False).round(2) * 100  
+            scoring_table["Score"] = (scoring_table.iloc[:,-4:] * weights).sum(axis = 1).round(2) 
+            scoring_table["Rank"] = scoring_table["Score"].rank(ascending = False)  
+        elif len(scoring_table) == 1: 
+            scoring_table["Counts"] = len(scoring_table) 
+            scoring_table["Score"] = 100 
+            scoring_table["Rank"] = 1 
+        else: 
+            pass 
+        completion_table = completion_table.append(scoring_table) 
+    completion_table = completion_table[["Symbol", "Name", '표적지수', '유형분류(대)', '유형분류(중)', '유형분류(소)', '설정일', 'class_1', 'class_2', 'class_3', 
+                                         'Counts', 'Rank', 'Score', 'Comp_transaction', 'Comp_AUM', 'Comp_tracking_err', 'Comp_fee', '거래량 (60일 평균)(주)', 
+                                         'AUM (연결)(원)', '괴리율(%)', 'TER 보수']] 
+    # completion_table.to_csv("./" + list_of_etfs + pd.datetime.today().strftime('%Y%m%d') + ".csv", encoding = 'euc-kr') 
+    table_only_1 = completion_table.loc[completion_table['Rank'] == 1] 
+    return completion_table, table_only_1 
+             
+
+# 동일한 그룹근내에 있는 etf들끼리 묶어서 모멘텀이 강한놈만 선별해서 default 종목과 함께 사용  
+
+if __name__ == "__main__" :  
+    df_etf = pd.read_excel("C:/Users/NHWM/Desktop/etf_list.xlsx", header = [5], encoding = "utf-8")  
+    dataframe = df_etf ; mixture_asset = "혼합" ; aum = 5500000000 ; duration = 180 ; derivatives = ["인버스", "레버리지"] ; transactions = 10000  
+     
+    df_mixture, df_aum_filter, df_duration_filter, df_derivatives, df_transaction_filter, df_filtered = etf_filter(dataframe, mixture_asset, aum, duration, derivatives, transactions) 
+     
+    '''  
+    dm = list of developed markets,  
+    em = list of emerging markets,  
+    kr = list of korean markets etfs  
+    '''  
+    dm_equity = ['일본', '북미', '헬스케어섹터', '글로벌', '유럽', '산업재섹터', '에너지섹터', '기타섹터', '정보기술섹터', '소재섹터']  
+    em_equity = ['중국', '중남미', '신흥국', '인도', '베트남', '기타국가', '러시아', '아시아퍼시픽']  
+    kr_equity = ['인덱스주식']   
+     
+    equity_only, dm, em, kr, bond_only, bond_overseas, bond_korean, bond_10yr, AI_only, AI_overseas, AI_korean = classification_by_markets(df_filtered, dm_equity, em_equity, kr_equity) 
+     
+    # 선진국/신흥국 주식은 Index만 사용 
+    dm_targets = ['NASDAQ 100', 'S&P 500', 'EURO STOXX50', 'Nikkei 225', 'Dow Jones', 'MSCI World', 'Russell 2000'] 
+    dm_etfs = dm[dm['표적지수'].str.contains('|'.join(dm_targets))] 
+    dm_etfs['class_3'] = 'Index' 
+    em_targets = ['Latin America', 'CSI 300', 'MSCI EM', 'Nifty 50', 'HSCEI', 'VN', 'Indonesia'] 
+    em_etfs = em[em['표적지수'].str.contains('|'.join(em_targets))] 
+    em_etfs['class_3'] = 'Index' 
+     
+    # 국내주식은 섹터/인덱스/기타로 구분해야됨  
+    kr_index_targets = ['코스피 200', '코스닥 150'] 
+    kr_index_etfs = pd.DataFrame() 
+    for item in kr_index_targets: 
+        tmp = kr.loc[kr['표적지수'] == item] 
+        kr_index_etfs = kr_index_etfs.append(tmp) 
+    kr_index_etfs['class_3'] = 'Index' 
+     
+    kr_sector_etfs = kr[kr['유형분류(소)'].str.contains('|'.join(['인덱스주식섹터']))] 
+    tmp_items = ['150', '200'] 
+    sector_removal = pd.DataFrame() 
+    for tmp_item in tmp_items:     
+        tmp = [item for item in kr_sector_etfs['Name'] if tmp_item in item]  
+        sector_removal = sector_removal.append(kr_sector_etfs[kr_sector_etfs['Name'].isin(tmp)]) 
+    kr_sector_etfs = kr_sector_etfs[~kr_sector_etfs['Symbol'].isin(sector_removal['Symbol'])] 
+    kr_sector_targets = ['반도체', '은행', '자동차', '방송통신', '기계장비', '증권', '에너지화학', '철강', '건설', '경기방어소비재', '보험', 
+                         '헬스케어', '소프트웨어', '화장품', '여행레저', '미디어컨텐츠', '바이오', 'IT하드웨어', 'IT소프트웨어', '필수소비재', '게임', '2차전지'] 
+    kr_sector_etfs = kr_sector_etfs[kr_sector_etfs['표적지수'].str.contains('|'.join(kr_sector_targets))] 
+    kr_sector_etfs['class_3'] = 'Sector' 
+     
+    kr_strategy_targets = ['삼성', '현대', '배당', '모멘텀', 'ESG', 'E커머스'] 
+    kr_strategy_etfs = kr[kr['표적지수'].str.contains('|'.join(kr_strategy_targets))] 
+    kr_strategy_etfs['class_3'] = 'Strategy' 
+     
+    kr_selected_etfs = kr_index_etfs, kr_sector_etfs, kr_strategy_etfs 
+    kr_etfs = pd.DataFrame() 
+    for df in kr_selected_etfs: 
+        kr_etfs = kr_etfs.append(df) 
+     
+    append_list = dm_etfs, em_etfs, kr_etfs 
+    equity_in_competition = pd.DataFrame()     
+    for df in append_list: 
+        equity_in_competition = equity_in_competition.append(df) 
+     
+    # 채권은 미국, 국내 10년물 2개만 사용 
+    bond_targets = ['KIS', 'S&P'] 
+    bond_etfs = bond_10yr 
+    bond_etfs['class_3'] = 'Index' 
+     
+    # 대체는 구리, 금, 원유만 사용 
+    AI_targets = ['Crude Oil',  'Gold', 'Copper'] 
+    AI_etfs = AI_only[AI_only['표적지수'].str.contains('|'.join(AI_targets))] 
+    AI_etfs['class_3'] = 'Index'  
+     
+    # 스코어링 함수 삽입 
+    d = dm_etfs, dm_targets 
+    e = em_etfs, em_targets 
+    k_index = kr_index_etfs, kr_index_targets 
+    k_sector = kr_sector_etfs, kr_sector_targets 
+    k_strategy = kr_strategy_etfs, kr_strategy_targets  
+    bond = bond_etfs, bond_targets 
+    ai = AI_etfs, AI_targets 
+    tuple_list = (d, e, k_index, k_sector, k_strategy, bond, ai) 
+     
+    weights = [0.2, 0.2, 0.2, 0.4] 
+    table_all_ranks = pd.DataFrame() 
+    table_first_ranks = pd.DataFrame() 
+    for tup in tuple_list: 
+        table_all_rank, table_first_rank = etf_scoring(tup[0], tup[1], weights) 
+        table_all_ranks = table_all_ranks.append(table_all_rank) 
+        table_first_ranks = table_first_ranks.append(table_first_rank) 
+    table_all_ranks.to_csv("./" + "경쟁ETF포함" + pd.datetime.today().strftime("%Y%m%d") + ".csv", encoding = "euc-kr") 
+    table_first_ranks.to_csv("./" + "스코어링1등ETF만" + pd.datetime.today().strftime("%Y%m%d") + ".csv", encoding = "euc-kr")  
