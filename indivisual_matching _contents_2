@@ -1,0 +1,726 @@
+from sqlalchemy import create_engine 
+import subprocess 
+
+import copy 
+import re 
+from itertools import compress 
+
+import configparser 
+import os 
+
+config = configparser.ConfigParser() 
+config.read('/home/crmbat/CUS_SOL_DEV/sys/config.ini') 
+
+# Hive ID, Password 입력 
+hive_id = '64645' # config['HIVE']['ID']             # Hive 접속 ID 
+hive_pwd = '64645q12!' # config['HIVE']['PASSWORD']  # Hive 접속 Password 
+
+# Hive 연결 엔진 설정 
+engine = create_engine(f'hive://{hive_id}:{hive_pwd}@172.20.8.62:10000/temp?auth=LDAP',  
+                       connect_args={'configuration':{'tez.queue.name':'default_create'}}) 
+                        
+
+def hive2csv(export_tablename, query, sep = '|') : 
+    ''' 
+    기본적인 파일저장경로는 '/user/{hive_id}/csvtemp/{export_tablename}'임. 
+     
+    Parameters 
+    ------ 
+    export_tablename : str. 저장할 csv 파일명 
+    query : str. 추출 테이블 쿼리문 
+     
+    Example 
+    ------ 
+    In [0]: query = 'SELECT * FROM DB' 
+    In [1]: hive2csv(export_tablename = 'filename', query = query)  
+    ''' 
+    if 'mapred.reduce.tasks' in query: 
+        engine.execute('SET mapred.reduce.tasks = 200') 
+     
+    # Hive 테이블 내용을 HDFS 파일로 Write 
+    SQL_MAKE_CSV = \ 
+    f''' 
+    INSERT OVERWRITE DIRECTORY '/user/{hive_id}/csvtemp/{export_tablename}' 
+    ROW FORMAT DELIMITED 
+    FIELDS TERMINATED BY "'''+sep+'''" 
+    STORED AS TEXTFILE''' 
+
+    SQL_MAKE_CSV = SQL_MAKE_CSV + query 
+
+    engine.execute(SQL_MAKE_CSV) 
+    engine.dispose() # DB Close 반드시! 
+     
+    # 위의 작업 처리 시 생성된 Reducer 갯수 만큼 파일이 분리되어 생성되므로 
+    # 하나의 파일로 합쳐서 .csv 파일로 생성 
+    subprocess.call(f'hdfs dfs -cat /user/{hive_id}/csvtemp/{export_tablename}/00* > /home/sbx/data/{export_tablename}.csv',shell=True) 
+    # hdfs의 임시 파일(디렉토리) 지우기 
+    subprocess.call(f'hdfs dfs -rm -r -skipTrash /user/{hive_id}/csvtemp/{export_tablename}',shell=True) 
+    # 파일 생성 위치 : Jupyter 홈 경로 아래에 생성됨 
+    filepath = f'/home/sbx/data/{export_tablename}.csv' 
+     
+from bs4 import BeautifulSoup 
+import urllib.request 
+import nltk 
+import konlpy 
+import numpy as np 
+import pandas as pd 
+import itertools 
+import csv 
+import re 
+import ast 
+from tqdm import tqdm 
+from pyhive import hive 
+import pandas as pd 
+import numpy as np 
+import matplotlib.pyplot as plt 
+import json 
+import platform 
+import datetime 
+from dateutil import parser 
+import configparser 
+from sklearn.decomposition import PCA 
+from sklearn.preprocessing import StandardScaler 
+from sklearn.cluster import KMeans # model 
+from scipy.spatial.distance import cdist 
+import matplotlib.pyplot as plt 
+from sklearn.metrics.pairwise import cosine_similarity 
+# %matplotlib inline 
+plt.rcParams["figure.figsize"] = (10,10) 
+import sys 
+import os 
+from dateutil.relativedelta import * 
+import argparse 
+import jaydebeapi 
+# import platform 
+import time 
+
+# 파일 경로 통해서 utils 읽어오기 
+import functools 
+
+try: 
+    from utils import utils 
+except: 
+    sys.path.append('/home/crmbat/CUS_SOL_DEV') 
+    from utils import utils 
+utils.hive = functools.partial(utils.hive, hive_id=hive_id, hive_password=hive_pwd) 
+
+os.environ["JAVA_HOME"] = '/usr/lib/jvm/java-8-openjdk-amd64' 
+try: 
+    os.environ["PATH"] = os.environ["PATH"] + ":" + "/opt/hadoop-3.1.1/bin/:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/spark/bin:/opt/hadoop-3.1.1/sbin:/opt/hadoop-3.1.1/sbin" 
+except: 
+    os.environ["PATH"] = "/opt/hadoop-3.1.1/bin/:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/spark/bin:/opt/hadoop-3.1.1/sbin:/opt/hadoop-3.1.1/sbin" 
+
+# utils.add_log(작업기준일(전일)=target_date, 프로그램명(ex:stk_trd_stle), 'INSERT', '테이블명',datetime.now()) 
+target_date = utils.hive(""" 
+    (SELECT CASE WHEN WDY_DIT_CD = '7' THEN BF_SLS_DT ELSE SLS_DT END SLS_DT FROM LAKE.ECBSW_TDT_SLS_DT WHERE SLS_DT_DIT_CD = '001') 
+    """,True).iloc[0,0]  
+PGM_NM = 'INDIVISUALIZED_CONTETNS_INSERT_TOHIVE' 
+
+def put_data(df_input, table) :   
+    '''  
+    HIVE TABLE INSERT 이 전에 속도와 안정성 확보를 위해 HIVE에 임시파일을 생성하는 사전 작업을 실행합니다.  
+      
+    Pandas 데이터프레임 -> hive 저장소 이동 -> 임시 테이블화 (-> 추 후 insert ; function 외부에서 별도 정의함.)  
+    * 추 후 Insert에서 대상 테이블의 컬럼오더를 맞춰야한다. (데이터프레임의 컬럼명을 따로 인식하지 않는다.)  
+      
+    Parameters  
+    ------  
+    df_input : pd.DataFrame. Insert 하고자 하는 데이터프레임  
+    table : str. create하고 저장할 임시 테이블명 지정  
+    '''  
+    df_input.to_csv("/home/sbx/data/{}.csv".format(table), index=False, header=False, encoding = 'utf-8', sep= '|')  
+      
+    hive_id = '64645'  
+    ##put data  
+    subprocess.call(f'hadoop fs -put -f /home/sbx/data/{table}.csv /user/'+hive_id+'/data/temp',shell=True)  
+    subprocess.call(f'hadoop fs -chmod -R 777 /user/'+hive_id+'/data/temp',shell=True)  
+
+    col_dtypes = [f'`{c}` string' if str(d) in ['object','string'] else f'`{c}` float' for d, c in zip(df_input.dtypes, df_input.columns)]  
+    col_dtypes = ','.join(col_dtypes)  
+
+    utils.hive('DROP TABLE IF EXISTS temp.csv_upload_temp_wjh', False)  
+    utils.hive(f"""    
+                    -- mapred.reduce.tasks  
+                    CREATE EXTERNAL TABLE temp.csv_upload_temp_wjh 
+                    (  
+                    {col_dtypes}  
+                    )   
+                    ROW FORMAT DELIMITED FIELDS TERMINATED BY '|'   
+                    STORED AS TEXTFILE LOCATION '/user/"""+hive_id+"""/data/temp'""", False)  
+    utils.hive(f"""drop table {table}""", False)  
+    utils.hive("""  
+                -- mapred.reduce.tasks  
+                create table {} as   
+                SELECT * FROM temp.csv_upload_temp_wjh  
+                """.format(table), False)  
+    subprocess.call(f'hadoop fs -rm /user/'+hive_id+f'/data/temp/{table}.csv',shell=True)      
+    return 0  
+
+# 원천데이터 호출 
+# 나무 & QV GA데이터 추출 후 통합 
+query = """   
+            SELECT V1.visit_date --기준일  
+                            ,V1.hits_hour        --기준시  
+                            ,V1.hits_minute      --기준분  ---초단위까지 필요하시면 말씀해주세요(초단위는 컬럼이 따로 없고 연산이 필요합니다)  
+                            ,V1.user_or_session_cd2 AS CUS_NO --사번   
+                            ,V1.user_or_session_cd3 --접속채널(PCWEB, HTS 등)  
+                            ,V1.user_or_session_cd4 --대상채널(WM파트너스, 종합업무시스템, 모바일영업지원시스템)  
+                            ,V1.eventcategory  
+                            ,V1.eventaction  
+                            ,V1.eventlabel  
+                    from lake.cus_epc_dat_namuh_smpc as V1  
+                    where EVENTCATEGORY in ('해외뉴스', '해외주식 투자정보', 'AI PICK3', '컨텐츠포유', '뉴스포털',  
+                        '시황안내', 'DART 전자공시', '투자캘린더', '최신리포트', '모닝미팅브리프',  
+                        '투자전략', '기업/산업분석', 'FICC', '해외주식', '종목리포트요약', '자산관리솔루션',  
+                        '뱅가드에서 온 편지')  
+                    AND EVENTLABEL NOT IN ('신청', '해외주식_개설', '해외주식_거래', '검색') 
+                    AND EVENTACTION NOT IN ('검색') 
+                    AND visit_date > DATE_FORMAT(DATE_SUB(CURRENT_DATE, 365), 'yyyyMMdd')  
+                    AND NOT ((user_or_session_cd2 IS NULL) AND (eventcategory IS NULL) AND (eventaction  IS NULL) AND (eventlabel IS NULL)) 
+        """ 
+
+export_tablename = 'namuh' 
+hive2csv(export_tablename, query, sep = '|') 
+namuh = pd.read_csv("/home/sbx/data/" + export_tablename + ".csv", sep = '|', header = None) 
+
+query = """   
+            SELECT V1.visit_date --기준일  
+                            ,V1.hits_hour --기준시  
+                            ,V1.hits_minute --기준분  ---초단위까지 필요하시면 말씀해주세요(초단위는 컬럼이 따로 없고 연산이 필요합니다)  
+                            ,V1.user_or_session_cd2 AS CUS_NO --사번   
+                            ,V1.user_or_session_cd3 --접속채널(PCWEB, HTS 등)  
+                            ,V1.user_or_session_cd4 --대상채널(WM파트너스, 종합업무시스템, 모바일영업지원시스템)  
+                            ,V1.eventcategory  
+                            ,V1.eventaction  
+                            ,V1.eventlabel  
+                    from lake.cus_epc_dat_qv_smpc as V1  
+                    where EVENTCATEGORY in ('해외뉴스', '해외주식 투자정보', 'AI PICK3', '컨텐츠포유', '뉴스포털',  
+                        '시황안내', 'DART 전자공시', '최신리포트', '모닝미팅브리프',  
+                        '투자전략', '기업/산업분석', 'FICC', '해외주식', '종목리포트요약', '자산관리솔루션',  
+                        '뱅가드에서 온 편지') -- '투자캘린더' 제외 
+                    AND EVENTLABEL NOT IN ('신청', '해외주식_개설', '해외주식_거래', '검색') 
+                    AND EVENTACTION NOT IN ('검색') 
+                    AND visit_date > DATE_FORMAT(DATE_SUB(CURRENT_DATE, 365), 'yyyyMMdd')   
+                    AND NOT ((user_or_session_cd2 IS NULL) AND (eventcategory IS NULL) AND (eventaction  IS NULL) AND (eventlabel IS NULL)) 
+        """ 
+
+export_tablename = 'qv' 
+hive2csv(export_tablename, query, sep = '|') 
+
+qv = pd.read_csv("/home/sbx/data/" + export_tablename + ".csv", sep = '|', header = None) 
+
+raw_ga_df = namuh.append(qv) 
+raw_ga_df.columns = ['visit_date', 'visit_hour', 'visit_minute', 'user_or_session_cd2', 'user_or_session_cd3', 'user_or_session_cd4', 'eventcategory', 'eventaction', 'eventlabel'] 
+raw_ga_df = raw_ga_df[raw_ga_df['eventlabel'].astype(str).str.contains('검색_') != True] 
+
+# 최신월의 고객 성별/나이 추출, 월말평잔 1 이상인 애들만 
+query = """   
+            INSERT OVERWRITE DIRECTORY '/user/64645/csvtemp/tmp_cus_df1' 
+            ROW FORMAT DELIMITED 
+            FIELDS TERMINATED BY '|' 
+            STORED AS TEXTFILE   
+                SELECT 
+                     V2.BSE_YM             -- 기준년월 
+                    ,V1.CUS_NO             -- 고객번호 
+                    ,V1.RNM_CFM_NO         -- 실명확인번호 
+                    ,V1.SEX_DIT_CD         -- 성별구분코드 
+                    ,V1.CUS_AGE_STN_DIT_CD -- 고객연령구간구분코드 
+                FROM LAKE.EDIMM_CUS V1 
+                INNER JOIN (SELECT ACT_NO, CUS_NO, TOT_AET_TLD_RND, BSE_ym FROM LAKE.ERSLM_MM_PDT_ACT_RSL  
+                WHERE IEM_MLF_CD = '01001' 
+                AND BSE_YM = (SELECT MAX(BSE_YM) FROM LAKE.ERSLM_MM_PDT_ACT_RSL) 
+                AND TOT_AET_TLD_RND > 0) V2 
+                ON V1.CUS_NO = V2.CUS_NO  
+        """ 
+
+engine.execute(query) 
+engine.dispose() # DB Close 반드시! 
+
+export_tablename = 'tmp_cus_df1' 
+
+# 위의 작업 처리 시 생성된 Reducer 갯수 만큼 파일이 분리되어 생성되므로 
+# 하나의 파일로 합쳐서 .csv 파일로 생성 
+subprocess.call(f'hdfs dfs -cat /user/{hive_id}/csvtemp/{export_tablename}/00* > /home/sbx/data/{export_tablename}.csv',shell=True) 
+# hdfs의 임시 파일(디렉토리) 지우기 
+subprocess.call(f'hdfs dfs -rm -r -skipTrash ./csvtemp/{export_tablename}',shell=True) 
+# 파일 생성 위치 : Jupyter 홈 경로 아래에 생성됨 
+filepath = f'/home/sbx/data/{export_tablename}.csv' 
+     
+tmp_cus_df1 = pd.read_csv("/home/sbx/data/" + export_tablename + ".csv", sep = '|', header = None) 
+tmp_cus_df1.columns = ['bse_ym', 'cus_no', 'rnm_cfm_no', 'sex_dit_cd', 'cus_age_stn_dit_cd'] 
+tmp_cus_df1['cus_no'] = tmp_cus_df1.cus_no.astype(str).str.zfill(9) 
+
+# 우수고객 추출  
+query = """  
+            DROP TABLE IF EXISTS TEMP.XNT_CUS 
+        """ 
+engine.execute(query) 
+
+query = """ 
+           CREATE TABLE TEMP.XNT_CUS AS  
+                WITH RECENT_TWO_MONTHS AS  
+                (SELECT BSE_YM -- 기준년월 
+                ,CUS_NO        -- 고객번호  
+                ,XNT_CUS_YN    -- 우수고객여부 
+                ,ROW_NUMBER() OVER (PARTITION BY CUS_NO ORDER BY BSE_YM DESC) AS RANKS 
+                FROM MART.BALSM_MM_XNT_CUS) 
+                    SELECT BSE_YM, CUS_NO, XNT_CUS_YN, RANKS FROM RECENT_TWO_MONTHS 
+                        WHERE RANKS <=1 
+        """ 
+engine.execute(query) 
+
+query = """  
+            SELECT bse_ym     -- 기준일자 
+                   ,cus_no     -- 고객번호 
+                   ,xnt_cus_yn -- 우수고객여부 
+            FROM TEMP.XNT_CUS  
+        """  
+
+export_tablename = 'tmp_cus_df2' 
+hive2csv(export_tablename, query, sep = '|') 
+tmp_cus_df2 = pd.read_csv("/home/sbx/data/" + export_tablename + ".csv", sep = '|', header = None) 
+tmp_cus_df2.columns = ['bse_dt', 'cus_no', 'xnt_cus_yn'] 
+
+# 주식거래스타일 추출 
+query = """   
+            SELECT 
+                 V1.BSE_YM             -- 기준년월 
+                ,V1.CUS_NO             -- 고객번호 
+                ,V1.STK_TRD_STLE_CD    -- 주식거래스타일코드 
+                ,V1.TMN_CTS            -- 당월내용 
+            FROM MART.BALSM_MM_CUS_STK_TRD_STLE V1 
+            WHERE BSE_YM = (SELECT MAX(BSE_YM) FROM MART.BALSM_MM_CUS_STK_TRD_STLE) 
+            AND STK_TRD_STLE_CD = '000001' 
+        """ 
+export_tablename = 'tmp_cus_df3' 
+hive2csv(export_tablename, query, sep = '|') 
+tmp_cus_df3 = pd.read_csv("/home/sbx/data/" + export_tablename + ".csv", sep = '|', header = None) 
+tmp_cus_df3.columns = ['bse_ym', 'cus_no', 'stk_trd_stle_cd', 'tmn_cts'] 
+tmp_cus_df3['cus_no'] = tmp_cus_df3.cus_no.astype(str).str.zfill(9) 
+
+# 종목명 가져오기 
+
+query = """ 
+            SELECT  
+            STD_IEM_CD, -- 표준종목코드 
+            IEM_CD,     -- 종목코드 
+            IEM_LLF_CD, -- 대분류코드 
+            IEM_MLF_CD, -- 중분류코드 
+            IEM_SLF_CD, -- 소분류코드 
+            RGS_MKT_CD, -- 등록시장코드 
+            IEM_KRL_NM, -- 종목한글명          
+            IEM_KRL_ANM,-- 종목한글약명      
+            IEM_ENG_NM, -- 종목영문명     
+            IEM_ENG_ANM -- 종목영문약명 
+            from LAKE.EPDIW_IEM_BAS 
+            WHERE IEM_LLF_CD IN ('01', '15') 
+        """ 
+
+export_tablename = 'epdiw_file_name' 
+hive2csv(export_tablename, query, sep = '|') 
+df = pd.read_csv("/home/sbx/data/" + export_tablename + ".csv", sep = '|', header = None) 
+
+df.columns = ['표준종목코드', '종목코드', '대분류코드', '중분류코드', '소분류코드', '등록시장코드', '한글명', '한글약명', '영문명', '영문약명'] 
+df = df.apply(lambda x: x.astype(str).str.rstrip()) 
+
+# 2019년 이후부터 쌓인 리서치 데이터 
+query = """ 
+            SELECT RSH_PPR_NO,     -- 리서치번호 
+               RSH_PPR_DIT_CD,     -- 구분코드 
+               RSH_PPR_SER_CD,     -- 섹터코드 
+               RSH_PPR_SYL_CD,     -- 양식코드 
+               RSH_PPR_LNG_DIT_CD, -- 언어구분코드 
+               RSH_PPR_DRU_EMP_NO, -- 작성자사번 
+               RSH_PPR_DRU_EMP_FNM,-- 작성자성명 
+               RSH_PPR_TIL_CTS,    -- 제목내용 
+               RSH_PPR_CFC_CD,     -- 분류코드 
+               RSH_PPR_NTI_YN,     -- 게시여부 
+               RLD_BTP_CD_PCL,     -- 업종코드 
+               RLD_BTP_NM_PCL,     -- 업종명 
+               RSH_PPR_CTS_LNE_DEL,-- 보고서내용 
+               EMS_CTET_CTS_LNE_DEL,-- EMS컨텐츠내용 
+               EMS_FWD_CTS_LNE_DEL, -- EMS발송내용 
+               EMS_TIL_CTS,        -- EMS제목내용 
+               TPK_IEM_NM_PCL,     -- 대상종목 
+               RGS_DT,             -- 등록일자 
+               RGS_TM,             -- 등록시각 
+               ALT_DT,             -- 변경일자 
+               ALT_TM              -- 변경시각 
+               from LAKE.TCISR_RSH_PPR  
+               WHERE RGS_DT > DATE_FORMAT(DATE_SUB(CURRENT_DATE, 730), 'yyyyMMdd') 
+        """ 
+export_tablename = 'rsh_ppr_file_name' 
+hive2csv(export_tablename, query, sep = '|') 
+df_2 = pd.read_csv("/home/sbx/data/rsh_ppr_file_name.csv", sep = '|', header = None) 
+
+df_2.columns = ['컨텐츠번호', '구분코드', '섹터코드', '양식코드', '언어구분코드', '작성자사번', '작성자성명', '컨텐츠제목', '분류코드', '게시여부', '업종코드', '업종명', '컨텐츠내용', 'EMS컨텐츠내용', 'EMS발송내용', 'EMS제목내용', '대상종목', '등록일자', '등록시각', '변경일자', '변경시각'] 
+# str전환 후 .0제거하기 
+df_2['컨텐츠번호'] = df_2['컨텐츠번호'].astype(str).str[:-2] 
+# 구분코드 6번은 모닝브리핑자료 / 언어구분코드 1은 한국어 / 게시여부 Y는 공개된 자료 
+research_df = df_2[(df_2['언어구분코드'] == 1) & (df_2['게시여부'] == 'Y') & (df_2['등록일자'] != 'N')] 
+research_df = research_df.sort_values('등록일자', ascending= False) 
+# 리서치보고서는 컨텐츠번호에 1이 앞으로 붙음 
+research_df['컨텐츠경로'] = '' 
+research_df['이미지경로'] = '' 
+research_df['컨텐츠매체코드'] = '01' 
+research_df = research_df.reset_index(drop=True) 
+tmp_research_df = research_df.copy() 
+research_df = research_df[['컨텐츠매체코드','컨텐츠번호', '컨텐츠제목', 'EMS컨텐츠내용', '컨텐츠경로', '이미지경로', '등록일자', '대상종목']] 
+
+# 인포스탁 구성종목 긁어오기 
+query = """ 
+            SELECT  
+            IFS_TMA_CD, -- 인포스탁테마코드 
+            SEN_IEM_CD, -- 단축종목코드 
+            RCV_DT -- 수신일자  
+            from LAKE.EPDIW_IFS_TMA_IEM 
+            WHERE RCV_DT = (SELECT MAX(RCV_DT) FROM LAKE.EPDIW_IFS_TMA_IEM) 
+        """ 
+export_tablename = 'epdiw_infostock_name' 
+hive2csv(export_tablename, query, sep = '|') 
+
+df_3 = pd.read_csv("/home/sbx/data/" + export_tablename + ".csv", sep = '|', header = None) 
+df_3.columns = ['테마코드', '종목코드', '수신일자'] 
+df_3['종목코드'] = "A" + df_3['종목코드'].astype(str).apply(lambda x: x.zfill(6)) 
+
+# 인포스탁 이름 긁어오기 
+query = """ 
+            SELECT  
+                IFS_TMA_CD, -- 인포스탁테마코드 
+                IFS_TMA_NM, -- 인포스탁테마명 
+                RCV_DT -- 수신일자  
+                from LAKE.EPDIW_IFS_TMA_CD      
+                WHERE RCV_DT = (SELECT MAX(RCV_DT) FROM LAKE.EPDIW_IFS_TMA_CD) 
+        """ 
+export_themename = 'epdiw_infostock_theme_name' 
+hive2csv(export_themename, query, sep = '|') 
+df_4 = pd.read_csv("/home/sbx/data/" + export_themename + ".csv", sep = '|', header = None) 
+df_4.columns = ['테마코드', '테마명', '수신일자'] 
+df_4['테마명'] = df_4['테마명'].str.rstrip()  
+
+# 고객의 원천 관심테마 긁어오기  
+query = """ 
+             SELECT * FROM  
+                (SELECT BSE_DT,     -- 기준일자 
+                        CUS_NO,     -- 고객번호 
+                        IFS_TMA_CD, -- 인포스탁 테마코드 
+                        SOR_NMV,    -- 점수수치 
+                        ROW_NUMBER() OVER (PARTITION BY CUS_NO ORDER BY SOR_NMV DESC) AS WEIGHT_RANK  -- 순위 
+                        FROM MART.BALSM_CUS_TMA_PRC_SOR 
+                            WHERE BSE_DT = (SELECT MAX(BSE_DT)  
+                            FROM MART.BALSM_CUS_TMA_PRC_SOR)) V1 
+                            WHERE WEIGHT_RANK <= 3 
+        """ 
+
+export_cus_theme = 'cus_theme' 
+hive2csv(export_cus_theme, query, sep = '|') 
+df_5 = pd.read_csv("/home/sbx/data/" + export_cus_theme + ".csv", sep = '|', header = None) 
+df_5.columns = ['기준일자', '고객번호', '테마코드', '점수', '순위'] 
+df_5['고객번호'] = df_5['고객번호'].astype(str).apply(lambda x: x.zfill(9)) 
+
+# 너튜브 가져오기  
+query = """ 
+            SELECT MPT_ID,      -- 동영상ID 
+                   CTET_RGS_DT,  -- 컨텐츠등록일자 
+                   CTET_TIL_NM,  -- 컨텐츠제목명 
+                   CTET_IMG_URL, -- 컨텐츠이미지URL 
+                   CTET_DESC    -- 컨텐츠설명 
+                   FROM LAKE.YTB_TCO_CNL_CTET  
+            WHERE CTET_RGS_DT > DATE_FORMAT(DATE_SUB(CURRENT_DATE, 365), 'yyyyMMdd') 
+        """ 
+youtube = 'youtube' 
+hive2csv(youtube, query, sep = '|') 
+df_7 = pd.read_csv("/home/sbx/data/" + youtube + ".csv", sep = '|', header = None) 
+# 겹치는 컨텐츠정보 제거 
+df_7 = df_7[df_7[0].duplicated() == False] 
+df_7.columns = ['컨텐츠번호', '등록일자', '컨텐츠제목', '이미지경로', '컨텐츠내용'] 
+df_7['컨텐츠경로'] = "youtube.com/watch?v=" + df_7['컨텐츠번호'] 
+df_7['컨텐츠매체코드'] = '03' 
+df_7 = df_7.sort_values('등록일자', ascending = False) 
+
+# 테마 클러스터링 테이블 가져오기  
+query = """ 
+            SELECT ifs_tma_cd,  -- 테마코드 
+                   sor_cts,     -- 군집정보 
+                   bse_dt      -- 기준일자 
+            FROM MART.BALSM_DD_IFS_TMA_DIGN_SOR 
+            WHERE ifs_tma_sor_cd = '020301' -- 군집화된테마코드정보 
+            AND BSE_DT = (SELECT MAX (BSE_DT) FROM MART.BALSM_DD_IFS_TMA_DIGN_SOR)   
+        """ 
+export_tablename = 'theme_clustering' 
+hive2csv(export_tablename, query, sep = '|') 
+df_8 = pd.read_csv("/home/sbx/data/" + export_tablename + ".csv", sep = '|', header = None) 
+df_8[1] = df_8[1].astype(str).str[:-2] 
+df_8.columns = ['테마코드', '군집정보', '기준일자']  
+
+# 반복된 고객코드 제외 
+tmp_cus_df1 = tmp_cus_df1[tmp_cus_df1['cus_no'].duplicated() == False] 
+
+# 고객별 성별, 연령, 투자스타일, 우수고객여부 통합  
+a = tmp_cus_df1[['bse_ym', 'cus_no', 'rnm_cfm_no', 'cus_age_stn_dit_cd']].merge(tmp_cus_df3[['tmn_cts', 'cus_no']], on= 'cus_no', how= 'outer', left_index= True, right_index= False) 
+
+aa = a.melt(id_vars= ['bse_ym', 'cus_no', 'rnm_cfm_no']) 
+aa = aa[~(aa['value'] == '_ ')] 
+
+key = ['cus_age_stn_dit_cd', 'tmn_cts'] # 'sex_dit_cd',  
+val = ['06', '08']  
+aaa = dict(zip(key, val)) 
+aa['variable'] = aa['variable'].replace(aaa) # EDW1 table 컨텐츠분류명  
+
+# 컨텐츠세부분류코드/명 입력 
+# 고객 나이 코드 세부 분류  
+age_key = ['_', '01', '02', '03', '04', '05', '06', '07', '08', '09'] 
+age_val = ['정보없음', '0601', '0601', '0601', '0602', '0603', '0604', '0605', '0606', '0606'] 
+age_dic = dict(zip(age_key, age_val)) 
+aa.loc[aa['variable'] == '06', 'value'] = aa.loc[aa['variable'] == '06', 'value'].replace(age_dic) 
+
+''' 
+gender_key = ['_', '1', '2'] 
+gender_val = ['정보없음', '남성', '여성'] 
+gender_dic = dict(zip(gender_key, gender_val)) 
+aa.loc[aa['variable'] == 'sex_dit_cd', 'value_nm'] = aa.loc[aa['variable'] == 'sex_dit_cd', 'value'].replace(gender_dic) 
+''' 
+
+# 투자스타일별컨텐츠  
+style_key = [501, 502, 503, 504, 505, 506, 507, 508, 509] 
+style_val = ['0801', '0802', '0803', '0804', '0805', '0806', '0807', '0808', '0809'] 
+style_dic = dict(zip(style_key, style_val)) 
+aa.loc[aa['variable'] == '08', 'value'] = aa.loc[aa['variable'] == '08', 'value'].replace(style_dic) 
+
+# na값 제거 
+aa = aa[aa.value.isna() == False]  
+
+edw_table1 = aa.copy() 
+
+# 최신일자의 테마분류 현황을 이용하여 사용 (일별 duplicate발생) 
+df_33 = df_3[df_3['수신일자'] == df_3['수신일자'].max()] 
+df_44 = df_4[df_4['수신일자'] == df_4['수신일자'].max()] 
+
+# 테마코드로 조인하기 
+infostock = df_3.merge(df_4[['테마코드', '테마명']], how = 'left', on= '테마코드') 
+
+# 테마:종목 / 종목:테마로 통합테이블 생성하기  
+# 테마 테이블 
+infostock_theme = infostock.melt(id_vars= ['수신일자', '테마명', '테마코드']).sort_values('테마명') 
+infostock_theme = infostock_theme.merge(df[['종목코드', '한글약명']], how= 'left', left_on = 'value', right_on= '종목코드', left_index = False).drop(columns = 'value') 
+infostock_theme = infostock_theme.merge(df_8[['테마코드', '군집정보']], left_on = '테마코드', right_on = '테마코드', how = 'outer', left_index = False) 
+
+cus_top_pref = df_5[df_5['순위'] <= 1] # 고객별 3순위 데이터  
+cus_top_pref_merged = cus_top_pref.merge(df_4[['테마명','테마코드']], on = '테마코드', how = 'left') 
+cus_top_pref_merged['컨텐츠분류코드'] = '07' 
+cus_top_pref_merged = cus_top_pref_merged.merge(df_8[['테마코드', '군집정보']], left_on = '테마코드', right_on = '테마코드', how = 'outer', left_index = False) 
+cus_top_pref_merged = cus_top_pref_merged.merge(tmp_cus_df1[['cus_no', 'rnm_cfm_no']], left_on = '고객번호', right_on = 'cus_no', how = 'inner') 
+cus_top_pref_merged = cus_top_pref_merged[cus_top_pref_merged['rnm_cfm_no'] != r'\N'] 
+cus_top_pref_merged['군집정보'] = ("7" + cus_top_pref_merged['군집정보'].str.zfill(2)).str.zfill(4) 
+
+# 기준일자 / 실명확인번호 / 컨텐츠분류추천순위 / 고객구분여부 / 고객번호 / 컨텐츠분류코드 / 컨텐츠세부분류코드 
+edw_table1 = edw_table1[['bse_ym', 'rnm_cfm_no', 'cus_no', 'variable','value']] 
+edw_table1['rmd_rnk'] = '' 
+tmp1 = ['기준일자', '고객번호', '컨텐츠분류코드', '군집정보', '순위'] 
+tmp2 = ['bse_ym', 'cus_no', 'variable', 'value','rmd_rnk'] 
+tmp = dict(zip(tmp1, tmp2)) 
+edw_table1 = edw_table1.append(cus_top_pref_merged[['기준일자', 'rnm_cfm_no', '고객번호', '컨텐츠분류코드', '군집정보', '순위']].rename(columns = tmp)) 
+edw_table1['cus_dit_yn'] = 'Y' 
+
+# 01: 지금뜨는기업 / 02:주목할산업 / 03: 인기컨텐츠 / 04: Daily Weekly Briefing / 05:최신유튜브 / 06:연령별컨텐츠 / 07:보유컨텐츠 / 08:투자스타일별컨텐츠 
+codes = ['01', '02', '03', '04', '05'] 
+code_nms = ['지금뜨는기업', '주목할산업', '인기컨텐츠', 'Daily Weekly Briefing', '최신유튜브'] 
+code_dic = dict(zip(codes, code_nms)) 
+
+edw_partition = pd.DataFrame() 
+for code in tqdm(list(code_dic.keys())): 
+    table = pd.DataFrame(columns = ['cus_no', 'variable', 'value'], data= [['0', code,  code + '00']]) 
+    edw_partition = edw_partition.append(table) 
+# 산출날짜 통일 
+edw_partition['bse_ym'] = pd.datetime.today().strftime('%Y%m%d') 
+edw_partition['rmd_rnk'] = "" 
+edw_partition['rnm_cfm_no'] = "_" 
+edw_partition['cus_dit_yn'] = 'N' 
+edw_table1 = edw_table1.append(edw_partition) 
+edw_table1 = edw_table1[['bse_ym', 'rnm_cfm_no', 'rmd_rnk', 'cus_dit_yn', 'cus_no', 'variable', 'value']] 
+
+# 보유컨텐츠 순위 유지한채 새로운 랭크 부여 
+edw_table1['variable_cd'] = edw_table1['variable'].apply(lambda x: 0 if x == '07' else 1) 
+edw_table2 = edw_table1.copy() 
+edw_table2['ctet_cfc_rmd_rnk'] = edw_table2.groupby(['cus_no'])['variable_cd'].rank(method= 'first') 
+edw_table2['ctet_cfc_rmd_rnk'] = edw_table2['ctet_cfc_rmd_rnk'].astype(int) 
+edw_table2['cus_no'] = edw_table2.cus_no.astype(str).str.zfill(9) 
+edw_table2['bse_dt'] = pd.datetime.today().strftime('%Y%m%d') 
+edw_table2.drop(columns = ['variable_cd', 'bse_ym', 'rmd_rnk'], inplace = True) 
+edw_table2.rename(columns = {'variable':'ctet_cfc_cd', 'value':'ctet_dtl_cfc_cd'}, inplace = True) 
+edw_table2 = edw_table2.sort_values(['bse_dt', 'cus_no', 'ctet_cfc_rmd_rnk']).reset_index(drop = True) 
+
+# EDW TABLE1 INSERT 
+put_data(df_input = edw_table2[['cus_no', 'ctet_cfc_rmd_rnk', 'cus_dit_yn', 'ctet_cfc_cd', 'ctet_dtl_cfc_cd', 'bse_dt']], table = 'temp.tmp_data_woozi_1') 
+
+try: 
+    utils.hive("""  
+                        -- mapred.reduce.tasks  
+                        insert OVERWRITE TABLE mart.BALSM_CUS_CTET_RMD_RNK_CFC 
+                        PARTITION(BSE_DT)  
+                        SELECT * FROM temp.tmp_data_woozi_1  
+                        """, False)  
+    print( '[' + datetime.datetime.now().strftime("%Y%m%d-%H:%M:%S") + ']' , 'mart.BALSM_CUS_CTET_RMD_RNK_CFC INSERT OVERWRITE 완료' ) 
+     
+    utils.add_log(BSE_DT = target_date,  
+                      PGM_NM = PGM_NM,  
+                      WRK_TP_DIT_NM= 'INSERT', 
+                      WRK_NM= 'mart.BALSM_CUS_CTET_RMD_RNK_CFC', 
+                      start_time=datetime.datetime.now() ) 
+except Exception as e: 
+    print('(ERROR RAISE in mart.BALSM_CUS_CTET_RMD_RNK_CFC)',e) 
+     
+contents_box = pd.read_csv('/home/crmbat/CUS_SOL_DEV/batch/INDIVISUALIZED_CONTENTS/contents_box.csv') 
+
+# 섹터코드에 관해서.. 101 : 기업분석 / 102 : 산업분석 / 201~204:투자전략 등 불필요/ 301 : 해외기업분석 / 302 : 해외산업분석 / 401~405 크래딧 / 601 : 모닝 브리핑  
+
+# 지금뜨는산업 생성 
+trend_company = tmp_research_df[(tmp_research_df.섹터코드 == 101) | (tmp_research_df.섹터코드 == 301)].sort_values(['등록일자', '등록시각'],ascending = [False, False]).iloc[:10] 
+trend_company_series = trend_company['컨텐츠번호'] 
+trend_company_df =  contents_box[contents_box['컨텐츠번호'].isin(trend_company_series)].sort_values('등록일자',ascending = False) 
+trend_company_df['ctet_dtl_cfc_cd'] = '0100' 
+trend_company_df['ctet_rmd_rnk'] = 0 
+trend_company_df['ctet_rmd_rnk'] = trend_company_df['ctet_rmd_rnk'].rank(ascending= False, method = 'first') 
+
+# 주목할만한산업 생성 
+trend_industry = tmp_research_df[((tmp_research_df.섹터코드 == 102) | (tmp_research_df.섹터코드 == 302)) & (tmp_research_df.컨텐츠제목.str.contains('Weekly') == False)].sort_values(['등록일자', '등록시각'],ascending = [False, False]).iloc[:10] 
+trend_industry_series = trend_industry['컨텐츠번호'] 
+trend_industry_df =  contents_box[contents_box['컨텐츠번호'].isin(trend_industry_series)].sort_values('등록일자',ascending = False) 
+trend_industry_df['ctet_dtl_cfc_cd'] = '0200' 
+trend_industry_df['ctet_rmd_rnk'] = 0 
+trend_industry_df['ctet_rmd_rnk'] = trend_industry_df['ctet_rmd_rnk'].rank(ascending= False, method = 'first') 
+
+# 인기컨텐츠 생성 (최근 일주일동안 조회수가 가장 높은 컨텐츠 순위) 
+hot_df = raw_ga_df.copy() 
+# 필요한 이벤트 카테고리만 사용 
+hot_df = hot_df[hot_df.eventcategory.isin(['컨텐츠포유', '기업/산업분석', '투자전략', '최신리포트','자산관리솔루션', 'FICC'])] 
+# 최근 7일간 조회한 컨텐츠 
+from datetime import datetime, timedelta 
+threshold = (datetime.strptime(str(max(hot_df.visit_date)), '%Y%m%d') - timedelta(days = 7)).strftime('%Y%m%d') 
+hot_df = hot_df[(threshold <= hot_df.visit_date.astype(str)) == True] 
+tmp = hot_df.eventlabel.value_counts().iloc[:10].index.tolist() 
+trend_contents_ga = hot_df[hot_df.eventlabel.isin(tmp)] 
+trend_contents_df = contents_box[(contents_box['컨텐츠제목'].isin(tmp) == True) & (contents_box['컨텐츠제목'].duplicated() == False)].sort_values('등록일자',ascending = False)  
+trend_contents_df['ctet_dtl_cfc_cd'] = '0300' 
+trend_contents_df['ctet_rmd_rnk'] = 0 
+trend_contents_df['ctet_rmd_rnk'] = trend_contents_df['ctet_rmd_rnk'].rank(ascending= False, method = 'first') 
+
+# 투자고수의 컨텐츠 (고수들의 조회 건수가 많지 않다) 
+''' 
+xnt_cus_list = tmp_cus_df2[tmp_cus_df2['xnt_cus_yn'] == 'Y'] 
+xnt_cus_ga = raw_ga_df.copy() 
+xnt_cus_ga = hot_df[hot_df.eventcategory.isin(['컨텐츠포유', '기업/산업분석', '투자전략', '최신리포트','자산관리솔루션', 'FICC'])] 
+xnt_cus_ga = xnt_cus_ga[xnt_cus_ga.user_or_session_cd2.isin(xnt_cus_list.cus_no.astype(str).tolist())] 
+''' 
+
+# Daily Weekly Briefing 
+tmp = tmp_research_df['컨텐츠제목'][tmp_research_df['섹터코드'] == 601].iloc[:10] 
+daily_df = contents_box[(contents_box['컨텐츠제목'].isin(tmp) == True) & (contents_box['컨텐츠제목'].duplicated() == False)].sort_values('등록일자',ascending = False) 
+daily_df['ctet_dtl_cfc_cd'] = '0400' 
+daily_df['ctet_rmd_rnk'] = 0 
+daily_df['ctet_rmd_rnk'] = daily_df['ctet_rmd_rnk'].rank(ascending= False, method = 'first') 
+
+# YouTube 
+youtube_df = df_7.iloc[:10]  
+youtube_df['ctet_dtl_cfc_cd'] = '0500' 
+youtube_df['ctet_rmd_rnk'] = 0 
+youtube_df['ctet_rmd_rnk'] = youtube_df['ctet_rmd_rnk'].rank(ascending= False, method = 'first') 
+youtube_df['기준일자'] = datetime.today().strftime('%Y%m%d') 
+
+# 연령별컨텐츠 (최근 1달간의 조회이력을 기반으로 추출) 
+cus_age_df = raw_ga_df.copy() 
+cus_age_df = cus_age_df[cus_age_df.eventcategory.isin(['컨텐츠포유', '기업/산업분석', '투자전략', '최신리포트','자산관리솔루션', 'FICC'])] 
+threshold = (datetime.strptime(str(max(cus_age_df.visit_date)), '%Y%m%d') - timedelta(days = 30)).strftime('%Y%m%d') 
+cus_age_df = cus_age_df[(threshold <= cus_age_df.visit_date.astype(str)) == True] 
+
+tmp = ['금요일에 미리 보는 주간 투자전략', '[화장품] Cosmetic Weekly 하이라이터', '[음식료] F&B Weekly 하이라이터', 'NH 해외주식 HIGH & LOW'] 
+cus_age_df = cus_age_df[cus_age_df['eventlabel'].isin(tmp) == False] 
+# 고객번호/고객스타일 추출 후 매핑 
+cus_df = edw_table2[(edw_table2['ctet_cfc_cd'] == '06')] 
+
+cus_contents_df = pd.DataFrame() 
+for key in np.unique(age_val)[:-1]: 
+    tmp = cus_df['cus_no'][cus_df['ctet_dtl_cfc_cd'] == key].tolist() 
+    # 각 연령별로 속하는 사람의 GA테이블 추출 
+    tmp_df = cus_age_df[cus_age_df['user_or_session_cd2'].isin(tmp)] 
+    tmp_10 = tmp_df['eventlabel'].value_counts().iloc[:12].index.tolist() 
+    tmp_10_contents = contents_box[(contents_box['컨텐츠제목'].isin(tmp_10)) & (contents_box['컨텐츠제목'].duplicated() == False)].sort_values('등록일자', ascending= False)[:10] 
+    tmp_10_contents['ctet_dtl_cfc_cd'] = key 
+    tmp_10_contents['ctet_rmd_rnk'] = 0 
+    tmp_10_contents['ctet_rmd_rnk'] = tmp_10_contents['ctet_rmd_rnk'].rank(ascending= False, method = 'first') 
+    cus_contents_df = cus_contents_df.append(tmp_10_contents) 
+
+# 투자스타일별컨텐츠 
+style_ga_df = raw_ga_df.copy() 
+style_ga_df = style_ga_df[style_ga_df.eventcategory.isin(['컨텐츠포유', '기업/산업분석', '투자전략', '최신리포트','자산관리솔루션', 'FICC'])] 
+
+threshold = (datetime.strptime(str(max(style_ga_df.visit_date)), '%Y%m%d') - timedelta(days = 30)).strftime('%Y%m%d') 
+style_ga_df = style_ga_df[(threshold <= style_ga_df.visit_date.astype(str)) == True] 
+
+# Weekly로 나오는 컨텐츠여서 정확한 조회수 파악이 어려움 
+tmp = ['금요일에 미리 보는 주간 투자전략', '[화장품] Cosmetic Weekly 하이라이터', '[음식료] F&B Weekly 하이라이터', 'NH 해외주식 HIGH & LOW'] 
+style_ga_df = style_ga_df[style_ga_df['eventlabel'].isin(tmp) == False] 
+# 고객번호/고객스타일 추출 후 매핑 
+style_df = edw_table2[(edw_table2['ctet_cfc_cd'] == '08')] 
+
+style_contents_df = pd.DataFrame() 
+for key in style_df.ctet_dtl_cfc_cd.unique(): 
+    tmp = style_df['cus_no'][style_df['ctet_dtl_cfc_cd'] == key].tolist() 
+    # 각 스타일별로 속하는 사람의 GA테이블 
+    tmp_df = style_ga_df[style_ga_df['user_or_session_cd2'].isin(tmp)] 
+    tmp_10 = tmp_df['eventlabel'].value_counts().iloc[:12].index.tolist() 
+    tmp_10_contents = contents_box[(contents_box['컨텐츠제목'].isin(tmp_10)) & (contents_box['컨텐츠제목'])].sort_values('등록일자', ascending= False)[:10] 
+    tmp_10_contents['ctet_dtl_cfc_cd'] = key 
+    tmp_10_contents['ctet_rmd_rnk'] = 0 
+    tmp_10_contents['ctet_rmd_rnk'] = tmp_10_contents['ctet_rmd_rnk'].rank(ascending= False, method = 'first') 
+    style_contents_df = style_contents_df.append(tmp_10_contents) 
+
+# 인풋을 테마코드로 집어넣으면 그와 관련된 종목 및 리포트가 다 보여질 수 있게 아웃풋이 나와야한다  
+theme_contents_df = pd.DataFrame() 
+for key in tqdm(infostock_theme['군집정보'].astype(str).dropna().unique()): 
+    stock_list = infostock_theme['한글약명'][infostock_theme['군집정보'].astype(str) == key].tolist() 
+    # 갯수가 존재하는지 여부를 파악하고, 갯수가 존재하는 리포트만 적용하는 apply 및 len함수임 
+    tmp = contents_box['컨텐츠키워드정보'].apply(lambda x : [item for item in stock_list if item in x]).apply(lambda x: len(x)) 
+    tmp_list = contents_box['컨텐츠제목'][tmp >= 1].tolist() 
+    tmp_hld_contents = contents_box[(contents_box['컨텐츠제목'].isin(tmp_list)) & (contents_box['컨텐츠제목'].duplicated() == False)]  
+    tmp_hld_contents['ctet_dtl_cfc_cd'] =  ('7' + key.zfill(2)).zfill(4) 
+    tmp_hld_contents.sort_values(['ctet_dtl_cfc_cd', '등록일자'], ascending = [False, True]) 
+    theme_contents_df = theme_contents_df.append(tmp_hld_contents) 
+    theme_contents_df['ctet_rmd_rnk'] = 0 
+    theme_contents_df = theme_contents_df.sort_values(['ctet_dtl_cfc_cd', '등록일자'], ascending= [True, False]).groupby('ctet_dtl_cfc_cd').head(10) 
+    theme_contents_df['ctet_rmd_rnk'] = theme_contents_df.groupby('ctet_dtl_cfc_cd')['ctet_rmd_rnk'].rank(ascending = False, method = 'first') 
+    theme_contents_df = theme_contents_df[theme_contents_df['ctet_rmd_rnk'] <= 10] 
+     
+edw_table3 = pd.DataFrame() 
+edw_table3 = pd.concat([trend_company_df, trend_industry_df, trend_contents_df, daily_df, youtube_df, cus_contents_df, style_contents_df, theme_contents_df]) 
+key = ['기준일자', '등록일자', '이미지경로', '컨텐츠경로', '컨텐츠내용', '컨텐츠매체코드', '컨텐츠번호', '컨텐츠제목', '컨텐츠키워드정보'] 
+val = ['bse_dt', 'ctet_ctn_dt', 'img_atl_url', 'ctet_atl_url', 'ctet_dat_cts', 'ctet_mdi_cd', 'ctet_no', 'ctet_til_cts', 'ctet_kwd_ifo'] 
+name = dict(zip(key, val)) 
+edw_table3.rename(columns = name, inplace = True) 
+edw_table3['ctet_rmd_rnk'] = edw_table3['ctet_rmd_rnk'].astype(int) 
+edw_table3 = edw_table3.apply(lambda x: x.replace("", "_")) 
+edw_table3 = edw_table3.apply(lambda x: x.replace(r"\N", "_")) 
+edw_table3 = edw_table3[['bse_dt', 'ctet_dtl_cfc_cd', 'ctet_rmd_rnk', 'ctet_mdi_cd', 'ctet_no', 'ctet_til_cts', 'ctet_dat_cts', 'ctet_kwd_ifo', 'ctet_atl_url', 'img_atl_url', 'ctet_ctn_dt']].reset_index(drop= True) 
+# 갯수 제한 
+edw_table3['ctet_dat_cts'] = edw_table3['ctet_dat_cts'].str[:1999] 
+edw_table3['ctet_til_cts'] = edw_table3['ctet_til_cts'].str[:49] 
+
+put_data(df_input = edw_table3[['ctet_dtl_cfc_cd', 'ctet_rmd_rnk', 'ctet_mdi_cd', 'ctet_no', 'ctet_til_cts', 'ctet_dat_cts', 'ctet_kwd_ifo', 'ctet_atl_url', 'img_atl_url', 'ctet_ctn_dt', 'bse_dt']], table = 'temp.tmp_data_woozi_2') 
+
+import datetime 
+try:  
+    utils.hive("""  
+                        -- mapred.reduce.tasks  
+                        insert OVERWRITE TABLE mart.BALSM_RMD_CTET_CFC_IFO 
+                        PARTITION(BSE_DT)  
+                        SELECT * FROM temp.tmp_data_woozi_2  
+                        """, False) # , not_omit_error = True 
+    print( '[' + datetime.datetime.now().strftime("%Y%m%d-%H:%M:%S") + ']' , 'MART.BALSM_RMD_CTET_CFC_IFO INSERT OVERWRITE 완료' ) 
+    utils.add_log(BSE_DT = target_date,  
+                      PGM_NM = PGM_NM,  
+                      WRK_TP_DIT_NM= 'INSERT', 
+                      WRK_NM= 'MART.BALSM_RMD_CTET_CFC_IFO', 
+                      start_time=datetime.datetime.now() ) 
+except Exception as e : 
+        print('(ERROR RAISE in MART.BALSM_RMD_CTET_CFC_IFO)',e) 
+          
