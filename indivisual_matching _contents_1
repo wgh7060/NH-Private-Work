@@ -1,0 +1,404 @@
+from sqlalchemy import create_engine 
+import subprocess 
+
+import copy 
+import re 
+from itertools import compress 
+
+import configparser 
+import os 
+
+config = configparser.ConfigParser() 
+config.read('/home/crmbat/CUS_SOL_DEV/sys/config.ini') 
+
+# Hive ID, Password 입력 
+hive_id = '64645' # config['HIVE']['ID']             # Hive 접속 ID 
+hive_pwd = '64645q12!' # config['HIVE']['PASSWORD']  # Hive 접속 Password 
+
+# Hive 연결 엔진 설정 
+engine = create_engine(f'hive://{hive_id}:{hive_pwd}@172.20.8.62:10000/temp?auth=LDAP',  
+                       connect_args={'configuration':{'tez.queue.name':'default_create'}}) 
+                        
+
+def hive2csv(export_tablename, query, sep = '|') : 
+    ''' 
+    기본적인 파일저장경로는 '/user/{hive_id}/csvtemp/{export_tablename}'임. 
+     
+    Parameters 
+    ------ 
+    export_tablename : str. 저장할 csv 파일명 
+    query : str. 추출 테이블 쿼리문 
+     
+    Example 
+    ------ 
+    In [0]: query = 'SELECT * FROM DB' 
+    In [1]: hive2csv(export_tablename = 'filename', query = query)  
+    ''' 
+    if 'mapred.reduce.tasks' in query: 
+        engine.execute('SET mapred.reduce.tasks = 200') 
+     
+    # Hive 테이블 내용을 HDFS 파일로 Write 
+    SQL_MAKE_CSV = \ 
+    f''' 
+    INSERT OVERWRITE DIRECTORY '/user/{hive_id}/csvtemp/{export_tablename}' 
+    ROW FORMAT DELIMITED 
+    FIELDS TERMINATED BY "'''+sep+'''" 
+    STORED AS TEXTFILE''' 
+
+    SQL_MAKE_CSV = SQL_MAKE_CSV + query 
+
+    engine.execute(SQL_MAKE_CSV) 
+    engine.dispose() # DB Close 반드시! 
+     
+    # 위의 작업 처리 시 생성된 Reducer 갯수 만큼 파일이 분리되어 생성되므로 
+    # 하나의 파일로 합쳐서 .csv 파일로 생성 
+    subprocess.call(f'hdfs dfs -cat /user/{hive_id}/csvtemp/{export_tablename}/00* > /home/sbx/data/{export_tablename}.csv',shell=True) 
+    # hdfs의 임시 파일(디렉토리) 지우기 
+    subprocess.call(f'hdfs dfs -rm -r -skipTrash /user/{hive_id}/csvtemp/{export_tablename}',shell=True) 
+    # 파일 생성 위치 : Jupyter 홈 경로 아래에 생성됨 
+    filepath = f'/home/sbx/data/{export_tablename}.csv' 
+
+from bs4 import BeautifulSoup 
+import urllib.request 
+import nltk 
+import konlpy 
+import numpy as np 
+import pandas as pd 
+import itertools 
+import csv 
+import re 
+import ast 
+from tqdm import tqdm 
+from pyhive import hive 
+import pandas as pd 
+import numpy as np 
+import matplotlib.pyplot as plt 
+import json 
+import platform 
+import datetime 
+from dateutil import parser 
+import configparser 
+from sklearn.decomposition import PCA 
+from sklearn.preprocessing import StandardScaler 
+from sklearn.cluster import KMeans # model 
+from scipy.spatial.distance import cdist 
+import matplotlib.pyplot as plt 
+from sklearn.metrics.pairwise import cosine_similarity 
+# %matplotlib inline 
+plt.rcParams["figure.figsize"] = (10,10) 
+import sys 
+import os 
+from dateutil.relativedelta import * 
+import argparse 
+import jaydebeapi 
+# import platform 
+import time 
+
+# 파일 경로 통해서 utils 읽어오기 
+import functools 
+
+try: 
+    from utils import utils 
+except: 
+    sys.path.append('/home/crmbat/CUS_SOL_DEV') 
+    from utils import utils 
+utils.hive = functools.partial(utils.hive, hive_id=hive_id, hive_password=hive_pwd) 
+
+os.environ["JAVA_HOME"] = '/usr/lib/jvm/java-8-openjdk-amd64' 
+try: 
+    os.environ["PATH"] = os.environ["PATH"] + ":" + "/opt/hadoop-3.1.1/bin/:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/spark/bin:/opt/hadoop-3.1.1/sbin:/opt/hadoop-3.1.1/sbin" 
+except: 
+    os.environ["PATH"] = "/opt/hadoop-3.1.1/bin/:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/spark/bin:/opt/hadoop-3.1.1/sbin:/opt/hadoop-3.1.1/sbin" 
+
+# utils.add_log(작업기준일(전일)=target_date, 프로그램명(ex:stk_trd_stle), 'INSERT', '테이블명',datetime.now()) 
+target_date = utils.hive(""" 
+    (SELECT CASE WHEN WDY_DIT_CD = '7' THEN BF_SLS_DT ELSE SLS_DT END SLS_DT FROM LAKE.ECBSW_TDT_SLS_DT WHERE SLS_DT_DIT_CD = '001') 
+    """,True).iloc[0,0]  
+PGM_NM = 'INDIVISUALIZED_CONTETNS_INSERT_TOHIVE' 
+
+# 원천데이터 호출 
+# 종목명 가져오기 
+
+query = """ 
+            SELECT  
+            STD_IEM_CD, -- 표준종목코드 
+            IEM_CD,     -- 종목코드 
+            IEM_LLF_CD, -- 대분류코드 
+            IEM_MLF_CD, -- 중분류코드 
+            IEM_SLF_CD, -- 소분류코드 
+            RGS_MKT_CD, -- 등록시장코드 
+            IEM_KRL_NM, -- 종목한글명          
+            IEM_KRL_ANM,-- 종목한글약명      
+            IEM_ENG_NM, -- 종목영문명     
+            IEM_ENG_ANM -- 종목영문약명 
+            from LAKE.EPDIW_IEM_BAS 
+            WHERE IEM_LLF_CD IN ('01', '15') 
+        """ 
+
+export_tablename = 'epdiw_file_name' 
+hive2csv(export_tablename, query, sep = '|') 
+df = pd.read_csv("/home/sbx/data/" + export_tablename + ".csv", sep = '|', header = None) 
+
+df.columns = ['표준종목코드', '종목코드', '대분류코드', '중분류코드', '소분류코드', '등록시장코드', '한글명', '한글약명', '영문명', '영문약명'] 
+df = df.apply(lambda x: x.astype(str).str.rstrip()) 
+
+# 2019년 이후부터 쌓인 리서치 데이터 
+query = """ 
+            SELECT RSH_PPR_NO,     -- 리서치번호 
+               RSH_PPR_DIT_CD,     -- 구분코드 
+               RSH_PPR_SER_CD,     -- 섹터코드 
+               RSH_PPR_SYL_CD,     -- 양식코드 
+               RSH_PPR_LNG_DIT_CD, -- 언어구분코드 
+               RSH_PPR_DRU_EMP_NO, -- 작성자사번 
+               RSH_PPR_DRU_EMP_FNM,-- 작성자성명 
+               RSH_PPR_TIL_CTS,    -- 제목내용 
+               RSH_PPR_CFC_CD,     -- 분류코드 
+               RSH_PPR_NTI_YN,     -- 게시여부 
+               RLD_BTP_CD_PCL,     -- 업종코드 
+               RLD_BTP_NM_PCL,     -- 업종명 
+               RSH_PPR_CTS_LNE_DEL,-- 보고서내용 
+               EMS_CTET_CTS_LNE_DEL,-- EMS컨텐츠내용 
+               EMS_FWD_CTS_LNE_DEL, -- EMS발송내용 
+               EMS_TIL_CTS,        -- EMS제목내용 
+               TPK_IEM_NM_PCL,     -- 대상종목 
+               RGS_DT,             -- 등록일자 
+               RGS_TM,             -- 등록시각 
+               ALT_DT,             -- 변경일자 
+               ALT_TM              -- 변경시각 
+               from LAKE.TCISR_RSH_PPR  
+               WHERE RGS_DT > DATE_FORMAT(DATE_SUB(CURRENT_DATE, 730), 'yyyyMMdd') 
+        """ 
+export_tablename = 'rsh_ppr_file_name' 
+hive2csv(export_tablename, query, sep = '|') 
+df_2 = pd.read_csv("/home/sbx/data/rsh_ppr_file_name.csv", sep = '|', header = None) 
+
+df_2.columns = ['컨텐츠번호', '구분코드', '섹터코드', '양식코드', '언어구분코드', '작성자사번', '작성자성명', '컨텐츠제목', '분류코드', '게시여부', '업종코드', '업종명', '컨텐츠내용', 'EMS컨텐츠내용', 'EMS발송내용', 'EMS제목내용', '대상종목', '등록일자', '등록시각', '변경일자', '변경시각'] 
+# str전환 후 .0제거하기 
+df_2['컨텐츠번호'] = df_2['컨텐츠번호'].astype(str).str[:-2] 
+# 구분코드 6번은 모닝브리핑자료 / 언어구분코드 1은 한국어 / 게시여부 Y는 공개된 자료 
+research_df = df_2[(df_2['언어구분코드'] == 1) & (df_2['게시여부'] == 'Y') & (df_2['등록일자'] != 'N')] 
+research_df = research_df.sort_values('등록일자', ascending= False) 
+# 리서치보고서는 컨텐츠번호에 1이 앞으로 붙음 
+research_df['컨텐츠경로'] = '' 
+research_df['이미지경로'] = '' 
+research_df['컨텐츠매체코드'] = '01' 
+research_df = research_df.reset_index(drop=True) 
+tmp_research_df = research_df.copy() 
+research_df = research_df[['컨텐츠매체코드','컨텐츠번호', '컨텐츠제목', 'EMS컨텐츠내용', '컨텐츠경로', '이미지경로', '등록일자', '대상종목']] 
+
+# 인포스탁 구성종목 긁어오기 
+query = """ 
+            SELECT  
+            IFS_TMA_CD, -- 인포스탁테마코드 
+            SEN_IEM_CD, -- 단축종목코드 
+            RCV_DT -- 수신일자  
+            from LAKE.EPDIW_IFS_TMA_IEM 
+            WHERE RCV_DT = (SELECT MAX(RCV_DT) FROM LAKE.EPDIW_IFS_TMA_IEM) 
+        """ 
+export_tablename = 'epdiw_infostock_name' 
+hive2csv(export_tablename, query, sep = '|') 
+
+df_3 = pd.read_csv("/home/sbx/data/" + export_tablename + ".csv", sep = '|', header = None) 
+df_3.columns = ['테마코드', '종목코드', '수신일자'] 
+df_3['종목코드'] = "A" + df_3['종목코드'].astype(str).apply(lambda x: x.zfill(6)) 
+
+# 인포스탁 이름 긁어오기 
+query = """ 
+            SELECT  
+                IFS_TMA_CD, -- 인포스탁테마코드 
+                IFS_TMA_NM, -- 인포스탁테마명 
+                RCV_DT -- 수신일자  
+                from LAKE.EPDIW_IFS_TMA_CD      
+                WHERE RCV_DT = (SELECT MAX(RCV_DT) FROM LAKE.EPDIW_IFS_TMA_CD) 
+        """ 
+export_themename = 'epdiw_infostock_theme_name' 
+hive2csv(export_themename, query, sep = '|') 
+df_4 = pd.read_csv("/home/sbx/data/" + export_themename + ".csv", sep = '|', header = None) 
+df_4.columns = ['테마코드', '테마명', '수신일자'] 
+df_4['테마명'] = df_4['테마명'].str.rstrip()  
+
+# 컨텐츠포유 가져오기  
+query = """ 
+            SELECT REPLACE(type_cd, '|', ' '), -- 유형코드 
+               REPLACE(board_id, '|', ' '),    -- 보드ID 
+               REPLACE(main_no, '|', ' '),     -- 주요번호 
+               REPLACE(subject, '|', ' '),     -- 주제 
+               REPLACE(content, '|', ' '),     -- 컨텐츠 
+               REPLACE(item_cd, '|', ' '),     -- 종목코드 
+               REPLACE(freefield_01, '|', ' '),-- 추가항목사용여부 (컨텐츠포유 정보만 추출) 
+               REPLACE(input_dttm, '|', ' ')   -- 입력일시 
+               FROM lake.CFYW_IL_BOARD_CONTENT  
+               WHERE input_dttm > DATE_SUB(CURRENT_DATE, 730) 
+               AND freefield_01 IN ('cntsForYou_1', 'cntsForYou_2') 
+        """ 
+
+cont_for_you = 'contents_for_you' 
+hive2csv(cont_for_you, query, sep = '|') 
+df_6 = pd.read_csv("/home/sbx/data/" + cont_for_you + ".csv", sep = '|', header = None) 
+
+# 컨텐츠포유 전처리 
+df_6['컨텐츠번호'] = df_6[1].astype(str) + str('_') + df_6[2].astype(str) # board_id 와 main_no를 합친것 
+df_6.rename(columns= dict(zip([0,3,4,5,6,7], ['유형코드', '제목', '컨텐츠내용', '종목코드', '컨텐츠구분', '등록일자'])), inplace= True) 
+
+# r을 붙이면 유니코드 에러를 해결할 수 있음 
+df_6 =  df_6[(df_6['등록일자'] != r'\N') | (df_6['등록일자'] != 0)] # 등록일자 없는것 제거  
+df_6['등록일자'] = df_6['등록일자'].str.replace("-", "").str[:8] 
+df_6['컨텐츠경로'] = '' 
+df_6['이미지경로'] = '' 
+df_6['컨텐츠매체코드'] = '02' 
+df_6 = df_6.reset_index(drop=True) 
+
+# 컨텐츠포유 Linkurl+ cardnewsUrl만 추출하는 코드  
+allstacked1 = [] 
+allstacked2 = [] 
+for idx, each_row in df_6.iterrows() : 
+    x_dict = dict(ast.literal_eval(each_row['컨텐츠내용'])) 
+     
+    all_linkurl = [] 
+    all_cardnewsurl = [] 
+    for each_dict in x_dict['cntsForYou']: 
+        try : all_linkurl.append(each_dict['linkurl']) 
+        except : pass 
+        try : all_cardnewsurl.append(each_dict['cardnewsUrl']) 
+        except : pass 
+     
+    tmp1 = pd.DataFrame(all_linkurl, columns = ['url']) 
+    tmp1['제목'] = idx 
+    tmp2 = pd.DataFrame(all_cardnewsurl, columns = ['url']) 
+    tmp2['제목'] = idx 
+     
+    allstacked1.append(tmp1) 
+    allstacked2.append(tmp2) 
+     
+allstacked1 = pd.concat(allstacked1) 
+allstacked2 = pd.concat(allstacked2) 
+
+# URL 완성 
+tmp = allstacked1.append(allstacked2) 
+tmp = tmp[tmp['제목'].duplicated()== False] 
+
+df_6['컨텐츠경로'] = df_6.merge(tmp, left_on= df_6.index, right_on= '제목', how= 'left')['url'] 
+df_6.rename(columns= {'제목' : '컨텐츠제목'}, inplace= True) 
+df_6 = df_6.sort_values('등록일자', ascending = False) 
+df_6 
+
+cont_for_you = df_6[['컨텐츠매체코드', '컨텐츠번호', '컨텐츠제목', '컨텐츠내용', '컨텐츠경로', '이미지경로', '등록일자']] 
+
+# 너튜브 가져오기  
+query = """ 
+            SELECT MPT_ID,      -- 동영상ID 
+                   CTET_RGS_DT,  -- 컨텐츠등록일자 
+                   CTET_TIL_NM,  -- 컨텐츠제목명 
+                   CTET_IMG_URL, -- 컨텐츠이미지URL 
+                   CTET_DESC    -- 컨텐츠설명 
+                   FROM LAKE.YTB_TCO_CNL_CTET  
+            WHERE CTET_RGS_DT > DATE_FORMAT(DATE_SUB(CURRENT_DATE, 365), 'yyyyMMdd') 
+        """ 
+youtube = 'youtube' 
+hive2csv(youtube, query, sep = '|') 
+df_7 = pd.read_csv("/home/sbx/data/" + youtube + ".csv", sep = '|', header = None) 
+# 겹치는 컨텐츠정보 제거 
+df_7 = df_7[df_7[0].duplicated() == False] 
+df_7.columns = ['컨텐츠번호', '등록일자', '컨텐츠제목', '이미지경로', '컨텐츠내용'] 
+df_7['컨텐츠경로'] = "youtube.com/watch?v=" + df_7['컨텐츠번호'] 
+df_7['컨텐츠매체코드'] = '03' 
+df_7['컨텐츠내용'] = df_7['컨텐츠내용'].apply(lambda x: re.sub(r'[0-5][0-9]:[0-5][0-9]', '', x)) 
+
+df_7 = df_7.sort_values('등록일자', ascending = False) 
+
+# 테마 클러스터링 테이블 가져오기  
+query = """ 
+            SELECT ifs_tma_cd,  -- 테마코드 
+                   sor_cts,     -- 군집정보 
+                   bse_dt      -- 기준일자 
+            FROM MART.BALSM_DD_IFS_TMA_DIGN_SOR 
+            WHERE ifs_tma_sor_cd = '020301' -- 군집화된테마코드정보 
+            AND BSE_DT = (SELECT MAX (BSE_DT) FROM MART.BALSM_DD_IFS_TMA_DIGN_SOR)   
+        """ 
+export_tablename = 'theme_clustering' 
+hive2csv(export_tablename, query, sep = '|') 
+df_8 = pd.read_csv("/home/sbx/data/" + export_tablename + ".csv", sep = '|', header = None) 
+df_8[1] = df_8[1].astype(str).str[:-2] 
+df_8.columns = ['테마코드', '군집정보', '기준일자']  
+
+# sorting 까지 한 통합형 테이블 
+research_df = research_df.rename(columns={'EMS컨텐츠내용':'컨텐츠내용'}) 
+contents_box = research_df.drop(columns = '대상종목').append(cont_for_you).sort_values(['컨텐츠번호'], ascending= [True]).reset_index(drop= True) 
+contents_box = contents_box.append(df_7).reset_index(drop = True) 
+contents_box['기준일자'] = pd.datetime.today().strftime('%Y%m%d') 
+contents_box = contents_box[['기준일자', '컨텐츠매체코드', '컨텐츠번호', '컨텐츠제목', '컨텐츠내용', '컨텐츠경로', '이미지경로', '등록일자']]  
+contents_box['컨텐츠내용'] = contents_box['컨텐츠내용'].apply(lambda x: BeautifulSoup(x, 'html.parser').text) 
+contents_box['컨텐츠내용'] = contents_box['컨텐츠내용'].str.replace('[^a-zA-Z0-9ㄱ-힣. ]',' ', regex=True) 
+contents_box['컨텐츠내용'] = contents_box['컨텐츠내용'].apply(lambda x: ' '.join(x.split())) 
+contents_box = contents_box.replace('', '_') 
+
+import pandas as pd 
+import platform 
+import nltk 
+import numpy as np 
+
+try: 
+    from ckonlpy.tag import Twitter 
+except: 
+    import subprocess 
+    subprocess.call('sudo -H pip install customized_konlpy',shell=True) 
+
+from tqdm import tqdm     
+from ckonlpy.tag import Twitter 
+from nltk.tokenize import word_tokenize 
+
+twitter = Twitter() 
+
+# 최신일자의 테마분류 현황을 이용하여 사용 (일별 duplicate발생) 
+df_33 = df_3[df_3['수신일자'] == df_3['수신일자'].max()] 
+df_44 = df_4[df_4['수신일자'] == df_4['수신일자'].max()] 
+
+# 테마코드로 조인하기 
+infostock = df_3.merge(df_4[['테마코드', '테마명']], how = 'left', on= '테마코드') 
+
+# 테마:종목 / 종목:테마로 통합테이블 생성하기  
+# 테마 테이블 
+infostock_theme = infostock.melt(id_vars= ['수신일자', '테마명', '테마코드']).sort_values('테마명') 
+infostock_theme = infostock_theme.merge(df[['종목코드', '한글약명']], how= 'left', left_on = 'value', right_on= '종목코드', left_index = False).drop(columns = 'value') 
+infostock_theme = infostock_theme.merge(df_8[['테마코드', '군집정보']], left_on = '테마코드', right_on = '테마코드', how = 'outer', left_index = False) 
+
+twitter.add_dictionary(infostock_theme['한글약명'].unique().tolist(), 'Noun') 
+
+# 텍스트정제  
+stopwords = ['이', '있', '하', '것', '들', '그', '되', '수', '이', '보', '않', '없', '나', '사람', '주', '아니', '등', '같', '우리', 
+             '때', '년', '가', '한', '지', '대하', '오', '말', '일', '그렇', '위하', '때문','그것', '두', '말하', '알', '그러나', '받', 
+             '못하', '일', '그런', '또', '문제', '더', '사회', '많', '그리고', '좋', '크', '따르', '중', '나오', '가지', '씨', '시키', 
+             '만들', '지금', '생각하', '그러', '속', '하나', '집', '살', '모르', '적', '월', '데', '자신', '안', '어떤', '내', '경우', 
+             '명', '생각', '시간', '그녀', '다시', '이런', '앞', '보이', '번', '나', '다른', '어떻', '여자'] 
+             #개, 전, 들, 사실, 이렇, 점, 싶, 말, 정도, 좀, 원, 잘, 통하, 소리, 놓 
+
+# 형태소추출 
+# twitter.morphs(contents_box['컨텐츠제목'].iloc[12], norm= True, stem= False) 
+# 명사추출   
+# extract_nouns = contents_box['컨텐츠내용'].apply(lambda x: twitter.nouns(x)) 
+to_df = pd.Series() 
+clean_stacked = [] 
+for i, sentence in tqdm(enumerate(contents_box['컨텐츠내용'])): 
+    clean_words = [] 
+    for word in nltk.tokenize.word_tokenize(sentence): 
+        # 불용어제거 후 딕셔너리 키워드 추출 
+        if word not in stopwords: 
+            clean_words.append(word) 
+    clean_stacked.append(clean_words) 
+to_df = pd.Series(clean_stacked) 
+
+# NH투자증권을 제외한 한국종목 유니크 추출 
+unique_kor_stk_list = infostock_theme['한글약명'][infostock_theme['한글약명'] != 'NH투자증권'].unique() 
+
+clean_kwds = [] 
+for sentence in tqdm(to_df): 
+    tmp = np.unique([stock for stock in unique_kor_stk_list if stock in sentence]) 
+    clean_kwds.append(tmp) 
+# df_integrated['형태소분류'].apply(lambda x: [stock for stock in stock_list if stock in x]) 
+clean_kwds = pd.Series(l.tolist() for l in clean_kwds) 
+
+# 키워드정보 contents_box 테이블에 적재 
+contents_box['컨텐츠키워드정보'] = clean_kwds 
+
+contents_box.to_csv('/home/crmbat/CUS_SOL_DEV/batch/INDIVISUALIZED_CONTENTS/contents_box.csv', index = False) 
+infostock_theme.to_csv('/home/crmbat/CUS_SOL_DEV/batch/INDIVISUALIZED_CONTENTS/infostock_theme.csv', index = False)  
