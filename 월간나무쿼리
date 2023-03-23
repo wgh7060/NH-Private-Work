@@ -1,0 +1,351 @@
+-- 원천1. 고객 샘플링 데이터 추출 (APPVIEW, EVENT 모두 추출), EDW에 굳이 안보내도 됨 
+set tez.queue.name = default_create; 
+set mapred.reduce.tasks = 1000; 
+DROP TABLE IF EXISTS TEMP.DLAB_MY_INVESTMENT_TESTER; 
+CREATE TABLE TEMP.DLAB_MY_INVESTMENT_TESTER AS  
+WITH TMP1 AS ( 
+SELECT USER_OR_SESSION_CD2  
+       , USER_OR_SESSION_CD3 
+       , USER_OR_SESSION_CD4 
+       , SCREENNAME  
+       , EVENTCATEGORY  
+       , EVENTACTION  
+       , EVENTLABEL  
+       , VISIT_DATE  
+       , HITS_HOUR  
+       , HITS_MINUTE  
+       , hits_time  
+       , visitstarttime 
+       , lead(hits_time) over (partition by visit_date, user_or_session_cd2, visitstarttime order by hits_time) as next_hits_time  
+       , TYPE  
+FROM LAKE.cus_epc_dat_namuh_smpc 
+    WHERE substr(VISIT_DATE,1,6) BETWEEN '202302' AND '202302' 
+    and user_or_session_cd2 is not null 
+    and user_or_session_cd3 = 'MTS' 
+    and user_or_session_cd4 = 'NAMUH' 
+union all  
+SELECT USER_OR_SESSION_CD2  
+       , USER_OR_SESSION_CD3 
+       , USER_OR_SESSION_CD4 
+       , SCREENNAME  
+       , EVENTCATEGORY  
+       , EVENTACTION  
+       , EVENTLABEL  
+       , VISIT_DATE  
+       , HITS_HOUR  
+       , HITS_MINUTE  
+       , hits_time  
+       , visitstarttime 
+       , lead(hits_time) over (partition by visit_date, user_or_session_cd2, visitstarttime order by hits_time) as next_hits_time  
+       , TYPE  
+FROM LAKE.cus_epc_dat_qv_smpc 
+    WHERE substr(VISIT_DATE,1,6) BETWEEN '202302' AND '202302' 
+    and user_or_session_cd2 is not null 
+    and user_or_session_cd3 = 'MTS' 
+    and user_or_session_cd4 = 'QV' 
+    /* 
+    AND USER_OR_SESSION_CD2 IN ( 
+                                  SELECT DISTINCT USER_OR_SESSION_CD2 FROM LAKE.CUS_EPC_DAT_NAMUH_SMPC 
+                                  WHERE SUBSTR(VISIT_DATE,1,6) = '202302' 
+                                       AND USER_OR_SESSION_CD3 = 'MTS'  
+                                       AND USER_OR_SESSION_CD2 IS NOT NULL  
+                                  -- AND RAND() < .0000001 
+                                  DISTRIBUTE BY RAND(10) 
+                                  SORT BY RAND(10) 
+                                  LIMIT 10000 
+                                  ) 
+                                  */ 
+) 
+SELECT VISIT_DATE 
+    , USER_OR_SESSION_CD2 
+    , USER_OR_SESSION_CD4 
+    , TYPE 
+    , SCREENNAME 
+    , EVENTCATEGORY 
+    , EVENTACTION 
+    , EVENTLABEL 
+    , visitstarttime 
+    , (NEXT_HITS_TIME - HITS_TIME) AS DURATION 
+FROM TMP1 
+; 
+
+-- 원천2. 사용자기본정보. 고객관리테이블 (연령+자산), EDW에 굳이 안보내도 됨  
+set tez.queue.name = default_create; 
+set mapred.reduce.tasks = 1000; 
+DROP TABLE IF EXISTS TEMP.DLAB_MY_INVESTMENT_TESTER_CRM; 
+CREATE TABLE TEMP.DLAB_MY_INVESTMENT_TESTER_CRM AS  
+SELECT DISTINCT USER_OR_SESSION_CD2 AS CUS_NO 
+    , CASE WHEN V2.NET_ASSET < 30000000 THEN '[0] 3천만원 미만' 
+            WHEN V2.NET_ASSET <  100000000 THEN  '[1] 1억 미만' 
+            WHEN V2.NET_ASSET < 1000000000 THEN   '[2] 10억 미만' 
+            WHEN V2.NET_ASSET >= 1000000000  THEN   '[3] 10억 이상' 
+            ELSE 'NULL' END AS asset_interval 
+    , CASE WHEN V3.CUS_BDT <= 1969 THEN '[0] B1B2' 
+          WHEN V3.CUS_BDT <= 1979 THEN '[1] Y' 
+          WHEN V3.CUS_BDT <= 1996 THEN '[2] X' 
+    ELSE '[3] Z' end as age_interval 
+FROM TEMP.DLAB_MY_INVESTMENT_TESTER AS V1 
+LEFT OUTER JOIN( 
+    SELECT CUS_NO 
+    , SUM(CASE WHEN SUBSTR(IEM_SLF_CD, 1, 2) <> '21' THEN TOT_AET_TLD_RND ELSE 0 END) AS NET_ASSET -- 신용을 제외한 기간내 월말 잔고합 
+    FROM LAKE.ERSLM_MM_PDT_ACT_RSL  
+    WHERE BSE_YM = '202302' 
+    GROUP BY 1 
+) AS V2  
+ON V1.USER_OR_SESSION_CD2 = V2.CUS_NO 
+LEFT OUTER JOIN ( 
+    SELECT DISTINCT V1.CUS_NO 
+        , V1.CUS_AGE 
+        , substr(V1.CUS_BDT,1,4) as cus_bdt 
+    FROM LAKE.EDIMM_CUS AS V1 
+    WHERE V1.CUS_AGE <= 120 
+) AS V3 
+ON V1.USER_OR_SESSION_CD2 = V3.CUS_NO 
+; 
+
+-- 원천3. 월별 고객방문 원천 (고객 방문일, 요일, 방문시간 산출) 
+set tez.queue.name = default_create; 
+set mapred.reduce.tasks = 1000; 
+DROP TABLE IF EXISTS TEMP.DLAB_MY_INVESTMENT_TESTER_MONTHLY_VISIT; 
+CREATE TABLE TEMP.DLAB_MY_INVESTMENT_TESTER_MONTHLY_VISIT AS  
+SELECT DISTINCT USER_OR_SESSION_CD2 AS CUS_NO 
+    , VISIT_DATE 
+    , FROM_UNIXTIME(UNIX_TIMESTAMP((VISIT_DATE),'yyyyMMdd'), 'u') AS DAY -- 1:월 ~ 7:일 
+    , FROM_UNIXTIME(visitstarttime + 32400) AS KST_TIME -- 세션타임: 한국시간 +9 시간, 썸머타임 시작하면 자동변경필수 
+    , SUBSTR(FROM_UNIXTIME(visitstarttime + 32400), -8, 2) AS VISIT_HOUR -- 뒤에서부터 시간만 (끝까지) 자르기 
+FROM TEMP.DLAB_MY_INVESTMENT_TESTER 
+; 
+
+-- 2. 고객별 월간 MTS 총체류시간 +  선별기준 체류시간 +  화면별/요일별 방문횟수 + 방문시간?, EDW에 보내야됨 
+sset tez.queue.name = default_create; 
+set mapred.reduce.tasks = 1000; 
+DROP TABLE IF EXISTS TEMP.DLAB_MY_INVESTMENT_TESTER_MART1_WOOJI; 
+CREATE TABLE TEMP.DLAB_MY_INVESTMENT_TESTER_MART1_WOOJI AS  
+SELECT v1.CUS_NO 
+        , case when v1.SCRN_CATEGORY = '[0] 전체' then v1.MIN_SPENT else 0 end as total_spent 
+        , case when v1.SCRN_CATEGORY = '[1] 탐색' then v1.MIN_SPENT else 0 end as search_spent  
+        , case when v1.SCRN_CATEGORY = '[2] 투자' then v1.MIN_SPENT else 0 end as invest_spent  
+        , case when v1.SCRN_CATEGORY = '[3] 자산' then v1.MIN_SPENT else 0 end as asset_spent      
+        , case when v2.DAY = '0' then v2.VISIT_CNT else 0 end as month_visit     
+        , case when v2.DAY = '1' then v2.VISIT_CNT else 0 end as monday_visit     
+        , case when v2.DAY = '2' then v2.VISIT_CNT else 0 end as tuesday_visit     
+        , case when v2.DAY = '3' then v2.VISIT_CNT else 0 end as wednesday_visit     
+        , case when v2.DAY = '4' then v2.VISIT_CNT else 0 end as thursday_visit     
+        , case when v2.DAY = '5' then v2.VISIT_CNT else 0 end as friday_visit     
+        , case when v2.DAY = '6' then v2.VISIT_CNT else 0 end as saturday_visit 
+        , case when v2.DAY = '7' then v2.VISIT_CNT else 0 end as sunday_visit 
+FROM ( 
+        -- 2.1 고객별 월간 MTS 총체류시간 
+        SELECT USER_OR_SESSION_CD2 AS CUS_NO 
+                , '[0] 전체' AS SCRN_CATEGORY 
+                , ROUND(SUM(DURATION/1000) / 60,2) AS MIN_SPENT 
+        FROM TEMP.DLAB_MY_INVESTMENT_TESTER AS V1 
+        GROUP BY 1,2 
+        UNION ALL  
+        -- 2.2 선별기준 체류시간 
+        SELECT USER_OR_SESSION_CD2 AS CUS_NO 
+            , CASE WHEN TRIM(SCREENNAME) IN ( 
+        '[0883] 투자 하이라이트 : X32m0883', 
+        '[5210] 지수/환율 : X08m5210', 
+        '[0400] 통합검색 : X41m4100', 
+        '[5310] 뉴스포털 : X08m5310', 
+        '[m5312] 토픽리스트 : X08m5312', 
+        '[5410] 매매동향 : X08m5410', 
+        '[0881] 인기토픽 : X32m0881', 
+        '[5101] 나무 투데이 : X35m5101', 
+        '[1400] 주식투자 엿보기 : X04m1400', 
+        '[9470] 빠른 창구 : X12m9470', 
+        '[1170] ETF Weekly Report : X04m1170', 
+        '[7930] 금융알리미 : X34m7930', 
+        '[1520] 국내섹터/테마 : X04m1520', 
+        '[5250] 파워맵 실시간수급 : X35m5250', 
+        '[5132] 투자컨텐츠상세 : X08m5132', 
+        '[152a] 섹터별종목리스트 : X04m152a', 
+        '[7910] 투자성과리포트 : X34m7910', 
+        '[5321] 해외뉴스 : X08m5321', 
+        '[1510] NH유망종목 : X04m1510', 
+        '[5110] 오늘의 투자포인트 : X35m5110', 
+        '[m5313] 뉴스검색 : X08m5313', 
+        '[351m] 해외주식기업정보 : X06m351m', 
+        '[5220] 예상지수 : X08m5220', 
+        '[5339] 맞춤형투자정보 : X08m5339', 
+        '[5611] 투자캘린더 : X08m5611', 
+        '[5240] 업종지수상세 : X08m5240', 
+        '[5241] 업종지수 : X08m5241', 
+        '투자정보/컨텐츠>종목리포트요약>투자전략>리포트요약', 
+        '[5200] 나무 PICK : X35m5200', 
+        '[5300] 나무 레벨업 : X35m5300', 
+        '[5100] 시황안내 : X08m5100', 
+        '[0885] 금융상품 투자 엿보기 : X32m0885', 
+        '[CHAT] 챗봇 사용하기 : X92mCHAT', 
+        '[5330] 최신리포트 : X08m5330', 
+        '[5130] 투자컨텐츠 : X08m5130', 
+        '[1530] 순위검색 : X04m1530', 
+        '[951w] 종목리포트요약 : X12m951w', 
+        '투자정보/컨텐츠>투자컨텐츠>overview', 
+        '[1550] 해외섹터/테마 : X04m1550', 
+        '[5350] 해외주식AI PICK3 : X08m5350', 
+        '[5215] 모닝스타 리서치 : X35m5210', 
+        '[084a] 투자가 즐거워지는 요즘 테마 : X40m084a', 
+        '[5324] 기업/산업분석 : X08m5324', 
+        '[2000] 조건검색 : X23m2000', 
+        '[2010] 간편조건검색 : X23m2010', 
+        '[993e] 세금(Tax)상담 : X12m993e', 
+        '[3581] 해외주식휴장일 캘린더 : X06m3581', 
+        '[5332] 자산관리솔루션 : X08m5324', 
+        '[3787] ISA 안내 : X06m3787', 
+        '[114e] ETF 섹터/테마 : X04m114e' 
+        )  THEN '[1] 탐색' 
+        WHEN TRIM(SCREENNAME) IN ( 
+        '[1110] 관심그룹 : X00m1110', 
+        '[1210] 주식현재가 : X04m1210', 
+        '[2110] 국내주식주문 : X05m2110', 
+        '[3510] 해외주식현재가 : X06m3510', 
+        '[3550] 해외주식잔고/손익 : X06m3550', 
+        '[3660] 해외주식통합주문 : X06m3660', 
+        '[4320] 국내주식체결내역 : X07m4320', 
+        '[0011] 주식종목검색 : X92m0011', 
+        '[1610] 종합차트 : X04m1610', 
+        '[2230] 시세포착주문 : X05m2230', 
+        '[3560] 해외주식체결내역 : X06m3560', 
+        '[2410] 국내주식예약주문 : X05m2410', 
+        '[1120] 시세알림등록 : X04m1120', 
+        '[2120] 금현물현재가 : X05m2120', 
+        '[4530] 공모청약 : X07m4530', 
+        '[6230] 장외채권찾기/주문 : X13m6210', 
+        '[2650] K-OTC현재가 : X05m2650', 
+        '[3300] 해외주식소수점거래 : X06m3300', 
+        '[6240] RP매매 : X09m6240', 
+        '[2130] 금현물주문 : X05m2130', 
+        '[1900] 국내주식소수점거래 : X04m1900', 
+        '[1140] ETF투자하기 : X04m1140', 
+        '[3561] 해외주식거래내역 : X06m3561', 
+        '[6270] 발행어음매매 : X09m6270', 
+        '[P424] 퇴직연금ETF/리츠주문 : X28p4240', 
+        '[7110] 선물옵션현재가 : X10m7110', 
+        '[4411] 유상청약(예약) : X07m4411', 
+        '[6200] 장내채권현재가 : X09m6200', 
+        '[3310] 해외주식소수점거래 : X06m3310', 
+        '[2310] 연금저축ETF주문 : X05m2310', 
+        '[6210] 장내채권매매 : X09m6210', 
+        '[m1915] 국내주식 소수점 주문내역 : X04m1915', 
+        '[6320] 외화RP매매 : X09m6320', 
+        '[P421] 퇴직연금상품찾기/주문 : X28p4210', 
+        '[5120] VI발동현황 : X08m5120', 
+        '[3650] 해외주식권리 : X06m3650', 
+        '[2660] K-OTC주문 : X05m2660', 
+        '[4800] 판매중인 ELS/DLS : X07m4800', 
+        '[001g] 해외ETF검색 : X92m001g', 
+        '[P446] 퇴직연금거래내역 : X28p4460', 
+        '[P460] 퇴직연금ETF현재가 : X28p4600', 
+        '[2770] 다이렉트인덱싱이란? : X05m2770', 
+        '[611a] 펀드상세 : X02m611a', 
+        '[2670] 코넥스현재가 : X05m2670', 
+        '[2610] 신주인수권현재가 : X05m2610', 
+        '[P141] 수익률조회 : X27p1410', 
+        '[4570] 미수반대매매내역 : X07m4570', 
+        '[3640] 미국주식월배당서비스 : X06m3640', 
+        '[5940] 파생ETF/ETN 거래신청 : X08m5940', 
+        '[m1905] 국내주식 소수점 매수 : X04m1905' 
+        ) THEN '[2] 투자' 
+        WHEN TRIM(SCREENNAME) IN ( 
+        '[4210] 국내주식잔고/손익 : X07m4210', 
+        '[4110] 계좌잔고 : X07m4110', 
+        '[4120] 나의 자산현황 : X07m4120', 
+        '[4731] 이체 : X07m483a', 
+        '[4720] 이체내역 : X07m4720', 
+        '[4990] 전일대비손익 : X07m4990', 
+        '[4330] 거래내역 : X07m4330', 
+        '[4150] 계좌자산추이 : X07m4150', 
+        '[8152] 대출/신용상환 및 관리 : X11m8152', 
+        '[8131] 담보비율조회 : X11m8131', 
+        '[4250] 펌뱅킹(구.채우기) : X07m4250', 
+        '[4122] 다른은행/증권(오픈뱅킹) : X07m4120', 
+        '[8100] 대출가능금액 : X11m8100', 
+        '[8161] 만기연장 : X11m8161', 
+        '[4760] 주식/채권이체 : X07m4760', 
+        '[P120] 연금저축잔고 : X27p1200', 
+        '[4770] 은행연계계좌이체 : X07m4770', 
+        '[7850] 통합자산 : X34m7850', 
+        '[8150] 현금/현물상환 : X11m8150', 
+        '[8120] 대출/신용잔고 : X11m8120', 
+        '[8140] 정기이자 및 수수료조회 : X11m8140', 
+        '[P101] 연금통합자산현황 : X27p1010', 
+        '[3690] My자산케어알림 : X06m3690', 
+        '[8110] 담보대출신청 : X11m8110', 
+        '[6790] MY 세금 : X09m6790', 
+        '[493a] 외화이체 : X07m493a', 
+        '[6791] 소득별 상세현황 : X09m6791', 
+        '[8180] 매도(환매)담보대출신청 : X11m8180', 
+        '[8410] 제휴대출 : X11m8410', 
+        '[1911] 국내주식소수점 주문내역/보유자산 : X04m1911', 
+        '[8010] 잔돈모아투자 : X34m8010', 
+        '[m1917] 국내주식 소수점 보유자산 : X04m1917', 
+        '[6160] 자동이체 : X09m6160', 
+        '[3670] 해외주식양도세조회 : X06m3670', 
+        '[493i] 외화이체내역 : X07m493i', 
+        '[8310] 종합담보대출이용신청/해지 : X11m8310', 
+        '[4580] 권리 현황 : X07m4580', 
+        '[P102] 연금한도조회 : X27p1020', 
+        '[7310] 선물옵션잔고/손익 : X10m7310', 
+        '[7940] 나의소비 : X34m7940', 
+        '[9611] My 수수료 : X12m9611', 
+        '[P144] 연금저축납입현황 : X27p1440', 
+        '[8190] 신용/대출종목조회 : X11m8190', 
+        '[6796] 절세상품 가입현황 : X09m6796', 
+        '[4160] 내계좌한눈에(어카운트인포) : X07m4160', 
+        '[626b] CMA이자조회 : X09m626b', 
+        '[P420] 퇴직연금잔고/매도 : X28p4200', 
+        '[P456] 예상세액조회 : X28p4560', 
+        '[P152] 연금저축자동이체 : X09m6160', 
+        '[6750] (금융,기타,양도)소득 현황 : X09m6750' 
+        ) THEN '[3] 자산' 
+        ELSE '[4] NULL' END AS SCRN_CATEGORY 
+        , ROUND(SUM(DURATION/1000) / 60,2) AS MIN_SPENT 
+        -- , COUNT(1) AS SCRN_CNT 
+        FROM TEMP.DLAB_MY_INVESTMENT_TESTER  
+        GROUP BY 1,2 
+) AS V1  
+LEFT OUTER JOIN ( 
+    -- 2.2 화면별/요일별 방문횟수 
+    SELECT CUS_NO 
+        , DAY 
+          , VISIT_CNT 
+        FROM (SELECT CUS_NO 
+                        , '0' AS DAY 
+                        , COUNT(DISTINCT VISIT_DATE) AS VISIT_CNT  
+                    FROM TEMP.DLAB_MY_INVESTMENT_TESTER_MONTHLY_VISIT 
+                    GROUP BY 1,2 
+                    UNION ALL  
+     SELECT CUS_NO 
+                    , DAY 
+                    , COUNT(DISTINCT VISIT_DATE) AS VISIT_CNT  
+                    FROM TEMP.DLAB_MY_INVESTMENT_TESTER_MONTHLY_VISIT 
+                    GROUP BY 1,2 
+        ) AS V1 
+) AS V2 
+ON V1.CUS_NO = V2.CUS_NO 
+; 
+
+
+
+-- 3. 자산별 월간 총 사용시간, EDW에 보내야됨 
+
+쿼리생성 
+
+
+-- 고객별 월간 MTS 체류시간 + 자산/연령 결합. 나 VS. 구간별 비교  
+set tez.queue.name = default_create; 
+set mapred.reduce.tasks = 1000; 
+DROP TABLE IF EXISTS TEMP.DLAB_MY_INVESTMENT_TESTER_TIME_SPENT; 
+CREATE TABLE TEMP.DLAB_MY_INVESTMENT_TESTER_TIME_SPENT AS  
+SELECT USER_OR_SESSION_CD2 AS CUS_NO 
+    , V1.VISIT_DATE 
+    , ROUND(SUM(DURATION/1000) / 60,2) AS MIN_SPENT 
+FROM TEMP.DLAB_MY_INVESTMENT_TESTER AS V1 
+GROUP BY 1,2 
+; 
+
+
+
+ 
