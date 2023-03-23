@@ -1,0 +1,543 @@
+-- 1.데이터 불러오기: 기간 23.1 ~ 23.2월 (2개월) 
+set tez.queue.name = default_create; 
+set mapred.reduce.tasks = 1000; 
+DROP TABLE IF EXISTS TEMP.DLAB_OCM_MSR_WJH; 
+CREATE TABLE TEMP.DLAB_OCM_MSR_WJH AS  
+  WITH TMP1 AS(  
+      SELECT CASE WHEN SUBSTR(SCREENNAME, 2, 4) IN ('0881') THEN '핫섹터(인기토픽)'  
+         WHEN SUBSTR(SCREENNAME, 2, 4) IN ('5339') THEN '맞춤형투자정보'  
+         END AS CATEGORY  
+       , USER_OR_SESSION_CD2  
+       , USER_OR_SESSION_CD3  
+       , USER_OR_SESSION_CD4 
+       , SCREENNAME  
+       , EVENTCATEGORY  
+       , EVENTACTION  
+       , EVENTLABEL  
+       , VISIT_DATE  
+       , HITS_HOUR  
+       , HITS_MINUTE  
+       , hits_time  
+       , lead(hits_time) over (partition by visit_date, user_or_session_cd2,visitstarttime order by hits_time) as next_hits_time  
+       , TYPE  
+       FROM LAKE.CUS_EPC_DAT_NAMUH_SMPC  
+       WHERE VISIT_DATE BETWEEN '20230101' AND '20230228' 
+           AND USER_OR_SESSION_CD3 = 'MTS'  
+           AND USER_OR_SESSION_CD2 IS NOT NULL  
+       ORDER BY VISIT_DATE, USER_OR_SESSION_CD2, HITS_HOUR, HITS_MINUTE, HITS_TIME  
+      )  
+, TMP2 AS(  
+      SELECT CASE WHEN (TYPE = 'APPVIEW' AND SUBSTR(SCREENNAME, 2, 4) IN ('0400')) THEN '통합검색'  
+                  WHEN (TYPE = 'EVENT' AND EVENTCATEGORY = '국내_현재가' AND EVENTACTION = 'NH데이터' AND EVENTLABEL = '얼마나지켜봤을까_조회건수') THEN 'NH데이터'  
+                  WHEN (TYPE = 'EVENT' AND EVENTACTION = '트레이딩(개인)' AND TRIM(EVENTLABEL) IN ('내 주식 하이라이트_배너', '내 주식 하이라이트_더보기')) THEN '종목하이라이트'  
+                  WHEN (TYPE = 'EVENT' AND EVENTCATEGORY = '주식 큐레이션') THEN '주식투자 엿보기' 
+                  WHEN (TYPE = 'EVENT' AND EVENTLABEL = 'My/고객센터>자산/잔고>>투자 하이라이트') THEN '투자하이라이트' 
+                  WHEN (TYPE = 'EVENT' AND EVENTCATEGORY = '주식니즈설문') THEN 'MTS주식설문' 
+                  WHEN (TYPE = 'EVENT' AND EVENTACTION = 'AI분석보고서') THEN 'AI분석보고서' 
+                  WHEN (TYPE = 'EVENT' AND EVENTACTION = '금융상품큐레이션') THEN '금융상품엿보기' 
+                    WHEN (TYPE = 'EVENT' AND EVENTCATEGORY = '검색_주식') THEN '검색_국내주식' 
+                    WHEN (TYPE = 'EVENT' AND EVENTCATEGORY = '검색_해외주식') THEN '검색_해외주식' 
+                    WHEN (TYPE = 'EVENT' AND EVENTCATEGORY = 'SEARCH') THEN '메뉴검색' 
+                  END AS CATEGORY  
+       , USER_OR_SESSION_CD2  
+       , USER_OR_SESSION_CD3  
+       , USER_OR_SESSION_CD4 
+       , SCREENNAME  
+       , EVENTCATEGORY  
+       , EVENTACTION  
+       , EVENTLABEL  
+       , VISIT_DATE  
+       , HITS_HOUR  
+       , HITS_MINUTE  
+       , hits_time  
+       , lead(hits_time) over (partition by visit_date, user_or_session_cd2,visitstarttime order by hits_time)as next_hits_time  
+       , TYPE  
+       FROM LAKE.CUS_EPC_DAT_NAMUH_SMPC  
+       WHERE VISIT_DATE BETWEEN '20230101' AND '20230228' 
+           AND USER_OR_SESSION_CD3 = 'MTS'  
+           AND USER_OR_SESSION_CD2 IS NOT NULL  
+       ORDER BY VISIT_DATE, USER_OR_SESSION_CD2, HITS_HOUR, HITS_MINUTE, HITS_TIME  
+       )  
+, TMP3 AS(  
+      SELECT CASE WHEN SUBSTR(SCREENNAME, 2, 4) IN ('0881') THEN '핫섹터(인기토픽)'  
+         WHEN SUBSTR(SCREENNAME, 2, 4) IN ('5339') THEN '맞춤형투자정보'  
+         END AS CATEGORY  
+       , USER_OR_SESSION_CD2  
+       , USER_OR_SESSION_CD3 
+       , USER_OR_SESSION_CD4 
+       , SCREENNAME  
+       , EVENTCATEGORY  
+       , EVENTACTION  
+       , EVENTLABEL  
+       , VISIT_DATE  
+       , HITS_HOUR  
+       , HITS_MINUTE  
+       , hits_time  
+       , lead(hits_time) over (partition by visit_date, user_or_session_cd2,visitstarttime order by hits_time) as next_hits_time  
+       , TYPE  
+       FROM LAKE.CUS_EPC_DAT_QV_SMPC  
+       WHERE VISIT_DATE BETWEEN '20230101' AND '20230228' 
+           AND USER_OR_SESSION_CD3 = 'MTS'  
+           AND USER_OR_SESSION_CD2 IS NOT NULL  
+       ORDER BY VISIT_DATE, USER_OR_SESSION_CD2, HITS_HOUR, HITS_MINUTE, HITS_TIME  
+     )  
+, TMP4 AS(  
+      SELECT CASE WHEN (TYPE = 'APPVIEW' AND SUBSTR(SCREENNAME, 2, 4) IN ('0400')) THEN '통합검색'  
+                  WHEN (TYPE = 'EVENT' AND EVENTCATEGORY = '국내_현재가' AND EVENTACTION = 'NH데이터' AND EVENTLABEL = '얼마나지켜봤을까_조회건수') THEN 'NH데이터'  
+                  WHEN (TYPE = 'EVENT' AND EVENTACTION = '트레이딩(개인)' AND TRIM(EVENTLABEL) IN ('내 주식 하이라이트_배너', '내 주식 하이라이트_더보기')) THEN '종목하이라이트'  
+                  WHEN (TYPE = 'EVENT' AND EVENTCATEGORY = '주식 큐레이션') THEN '주식투자 엿보기' 
+                  WHEN (TYPE = 'EVENT' AND EVENTLABEL = 'My/고객센터>자산/잔고>>투자 하이라이트') THEN '투자하이라이트' 
+                  WHEN (TYPE = 'EVENT' AND EVENTCATEGORY = '주식니즈설문') THEN 'MTS주식설문' 
+                  WHEN (TYPE = 'EVENT' AND EVENTACTION = 'AI분석보고서') THEN 'AI분석보고서' 
+                  WHEN (TYPE = 'EVENT' AND EVENTACTION = '금융상품큐레이션') THEN '금융상품엿보기' 
+                    WHEN (TYPE = 'EVENT' AND EVENTCATEGORY = '검색_주식') THEN '검색_국내주식' 
+                    WHEN (TYPE = 'EVENT' AND EVENTCATEGORY = '검색_해외주식') THEN '검색_해외주식' 
+                    WHEN (TYPE = 'EVENT' AND EVENTCATEGORY = 'SEARCH') THEN '메뉴검색' 
+                  END AS CATEGORY  
+       , USER_OR_SESSION_CD2  
+       , USER_OR_SESSION_CD3  
+       , USER_OR_SESSION_CD4 
+       , SCREENNAME  
+       , EVENTCATEGORY  
+       , EVENTACTION  
+       , EVENTLABEL  
+       , VISIT_DATE  
+       , HITS_HOUR  
+       , HITS_MINUTE  
+       , hits_time  
+       , lead(hits_time) over (partition by visit_date, user_or_session_cd2,visitstarttime order by hits_time)as next_hits_time  
+       , TYPE  
+       FROM LAKE.CUS_EPC_DAT_QV_SMPC  
+       WHERE VISIT_DATE BETWEEN '20230101' AND '20230228' 
+           AND USER_OR_SESSION_CD3 = 'MTS'  
+           AND USER_OR_SESSION_CD2 IS NOT NULL   
+       ORDER BY VISIT_DATE, USER_OR_SESSION_CD2, HITS_HOUR, HITS_MINUTE, HITS_TIME  
+   )       
+  SELECT VISIT_DATE, USER_OR_SESSION_CD2, USER_OR_SESSION_CD4, CATEGORY, (NEXT_HITS_TIME - HITS_TIME) AS DURATION  
+  FROM TMP1  
+  WHERE TYPE = 'APPVIEW'  
+  AND USER_OR_SESSION_CD3 = 'MTS'  
+  AND USER_OR_SESSION_CD2 IS NOT NULL  
+  AND SUBSTR(SCREENNAME,2,4) IN ('0881', '5339')  
+  UNION ALL  
+  SELECT VISIT_DATE, USER_OR_SESSION_CD2, USER_OR_SESSION_CD4, CATEGORY, (NEXT_HITS_TIME - HITS_TIME) AS DURATION  
+  FROM TMP2  
+  WHERE (  
+  (TYPE = 'APPVIEW' AND SUBSTR(SCREENNAME, 2, 4) IN ('0400')) 
+  OR (TYPE = 'EVENT' AND EVENTCATEGORY = '국내_현재가' AND EVENTACTION = 'NH데이터' AND EVENTLABEL = '얼마나지켜봤을까_조회건수')  
+  OR (TYPE = 'EVENT' AND EVENTACTION = '트레이딩(개인)' AND TRIM(EVENTLABEL) IN ('내 주식 하이라이트_배너', '내 주식 하이라이트_더보기'))  
+  OR (TYPE = 'EVENT' AND EVENTCATEGORY = '주식 큐레이션') 
+  OR (TYPE = 'EVENT' AND EVENTLABEL = 'My/고객센터>자산/잔고>>투자 하이라이트') 
+  OR (TYPE = 'EVENT' AND EVENTCATEGORY = '주식니즈설문') 
+  OR (TYPE = 'EVENT' AND EVENTACTION = 'AI분석보고서') 
+  OR (TYPE = 'EVENT' AND EVENTACTION = '금융상품큐레이션') 
+  OR (TYPE = 'EVENT' AND EVENTCATEGORY = '검색_주식') 
+  OR (TYPE = 'EVENT' AND EVENTCATEGORY = '검색_해외주식')  
+  OR (TYPE = 'EVENT' AND EVENTCATEGORY = 'SEARCH')           
+  )  
+  AND USER_OR_SESSION_CD3 = 'MTS'  
+  AND USER_OR_SESSION_CD2 IS NOT NULL  
+  UNION ALL  
+  SELECT VISIT_DATE, USER_OR_SESSION_CD2, USER_OR_SESSION_CD4, CATEGORY, (NEXT_HITS_TIME - HITS_TIME) AS DURATION  
+  FROM TMP3  
+  WHERE TYPE = 'APPVIEW'  
+  AND USER_OR_SESSION_CD3 = 'MTS'  
+  AND USER_OR_SESSION_CD2 IS NOT NULL  
+  AND SUBSTR(SCREENNAME,2,4) IN ('0881', '5339')  
+  UNION ALL  
+  SELECT VISIT_DATE, USER_OR_SESSION_CD2, USER_OR_SESSION_CD4, CATEGORY, (NEXT_HITS_TIME - HITS_TIME) AS DURATION  
+  FROM TMP4  
+  WHERE (  
+  (TYPE = 'APPVIEW' AND SUBSTR(SCREENNAME, 2, 4) IN ('0400')) 
+  OR (TYPE = 'EVENT' AND EVENTCATEGORY = '국내_현재가' AND EVENTACTION = 'NH데이터' AND EVENTLABEL = '얼마나지켜봤을까_조회건수')  
+  OR (TYPE = 'EVENT' AND EVENTACTION = '트레이딩(개인)' AND TRIM(EVENTLABEL) IN ('내 주식 하이라이트_배너', '내 주식 하이라이트_더보기'))  
+  OR (TYPE = 'EVENT' AND EVENTCATEGORY = '주식 큐레이션') 
+  OR (TYPE = 'EVENT' AND EVENTLABEL = 'My/고객센터>자산/잔고>>투자 하이라이트') 
+  OR (TYPE = 'EVENT' AND EVENTCATEGORY = '주식니즈설문') 
+  OR (TYPE = 'EVENT' AND EVENTACTION = 'AI분석보고서') 
+  OR (TYPE = 'EVENT' AND EVENTACTION = '금융상품큐레이션') 
+  OR (TYPE = 'EVENT' AND EVENTCATEGORY = '검색_주식') 
+  OR (TYPE = 'EVENT' AND EVENTCATEGORY = '검색_해외주식') 
+  OR (TYPE = 'EVENT' AND EVENTCATEGORY = 'SEARCH')   
+  )  
+  AND USER_OR_SESSION_CD3 = 'MTS'  
+  AND USER_OR_SESSION_CD2 IS NOT NULL  
+; 
+
+-- 1.2 잔고/고객별 최초가입일자/연령/성별/회전율 테이블 결합  
+set tez.queue.name = default_create; 
+set mapred.reduce.tasks = 1000; 
+DROP TABLE IF EXISTS TEMP.DLAB_OCM_MSR_AET_WJH; 
+CREATE TABLE TEMP.DLAB_OCM_MSR_AET_WJH AS  
+SELECT V1.* 
+    ,V2.NET_ASSET 
+    ,V3.FST_ACT_OPN_DT 
+    ,V3.CUS_AGE 
+    ,V3.SEX_DIT_CD 
+    ,V4.TMN_STK_ROT_RT 
+FROM TEMP.DLAB_OCM_MSR_WJH AS V1 
+LEFT OUTER JOIN( 
+    SELECT CUS_NO 
+    , SUM(CASE WHEN SUBSTR(IEM_SLF_CD, 1, 2) <> '21' THEN TOT_AET_TLD_RND ELSE 0 END) AS NET_ASSET -- 신용을 제외한 기간내 월말 잔고합 
+    FROM LAKE.ERSLM_MM_PDT_ACT_RSL  
+    WHERE BSE_YM = '202302' 
+    GROUP BY 1 
+) AS V2  
+ON V1.USER_OR_SESSION_CD2 = V2.CUS_NO 
+LEFT OUTER JOIN ( 
+    SELECT DISTINCT V1.CUS_NO, V1.FST_ACT_OPN_DT, V1.SEX_DIT_CD, V1.CUS_AGE 
+    FROM LAKE.EDIMM_CUS AS V1 -- 고객별 계좌개설일 
+    INNER JOIN LAKE.EDIMM_ACT AS V2 
+    ON V1.CUS_NO = V2.CUS_NO 
+    AND V1.FST_ACT_OPN_DT = V2.ACT_OPN_DT 
+) AS V3 
+ON V1.USER_OR_SESSION_CD2 = V3.CUS_NO 
+LEFT OUTER JOIN ( 
+    SELECT CUS_NO 
+  , BSE_YM 
+  , TMN_STK_ROT_RT 
+FROM lake.ECRMM_CUS_STK_ICN 
+WHERE BSE_YM BETWEEN '202301' AND '202302' 
+) AS V4  
+ON V1.USER_OR_SESSION_CD2 = V4.CUS_NO 
+AND SUBSTR(V1.VISIT_DATE,1,6) = V4.BSE_YM 
+; 
+
+-- MTS MAU 
+select * from mart.DLAB_GA_MM_ALL_IFO_TTZ 
+where bse_ym between '202301' and '202302' 
+; 
+
+SELECT 'NH' AS CNL 
+    , SUBSTR(VISIT_DATE, 1, 6) AS BSE_YM 
+    , COUNT(DISTINCT USER_OR_SESSION_CD2) AS CNT 
+FROM TEMP.DLAB_OCM_MSR_AET_WJH 
+GROUP BY 1,2 
+; 
+
+-- SERVICE MAU 
+SELECT 'NH' AS CNL 
+              , CATEGORY 
+              , SUBSTR(VISIT_DATE,1,6) AS BSE_YM 
+              /*, CASE WHEN NET_ASSET >= 100000000 THEN 'RICH'  
+                     WHEN NET_ASSET >= 500000 THEN 'NORMAL' 
+                     ELSE 'POOR' END AS AET_CLASS 
+                     */ 
+              , COUNT(DISTINCT USER_OR_SESSION_CD2) AS MAU 
+              FROM TEMP.DLAB_OCM_MSR_AET_WJH AS V1 
+GROUP BY 1,2,3 
+ORDER BY 1,2,3 DESC 
+; 
+
+-- MTS DAU 
+SELECT TOTAL_DAU_VALUE, QV_DAU_VALUE, NAMUH_DAU_VALUE, VISIT_DATE FROM MART.DLAB_GA_DD_ALL_IFO_TTZ AS V1 
+INNER JOIN (  
+                    SELECT  TRD_BSE_DT 
+                    FROM   LAKE.ECBSW_BAS_SLS_DD --주말을 제외한 평균 영업일을 구하기 위함  
+                    WHERE  BSE_SLS_DT_DIT_CD = '001' 
+                    AND    BSE_SLS_DT BETWEEN  '20230101' AND '20230228' 
+                    AND    (HDY_DIT_CD = '0' AND WDY_DIT_CD <> '7')  
+                ) AS V2 
+                ON V1.VISIT_DATE = V2.TRD_BSE_DT 
+ORDER BY V1.VISIT_DATE DESC  
+; 
+
+
+-- SERVICE DAU 
+SELECT 'NH' AS USER_OR_SESSION_CD4  
+              , CATEGORY 
+              , VISIT_DATE 
+               /* , CASE WHEN NET_ASSET >= 100000000 THEN 'RICH'  
+                        WHEN NET_ASSET >= 500000 THEN 'NORMAL' 
+                        ELSE 'POOR' END AS AET_CLASS 
+        */ 
+              , COUNT(DISTINCT USER_OR_SESSION_CD2) AS CNT 
+                FROM TEMP.DLAB_OCM_MSR_AET_WJH AS V1 
+              INNER JOIN (   
+              SELECT TRD_BSE_DT 
+              FROM LAKE.ECBSW_BAS_SLS_DD -- 기본영업일 
+              WHERE TRD_BSE_DT BETWEEN '20230101' AND '20230228' 
+              AND (HDY_DIT_CD = '0' AND WDY_DIT_CD <> '7') 
+              ORDER BY TRD_BSE_DT DESC  
+          ) AS V2  
+          ON V1.VISIT_DATE = V2.TRD_BSE_DT 
+          GROUP BY 1,2,3 
+          ORDER BY 1,2,3 DESC 
+          ; 
+
+-- 일별 클릭수 
+SELECT 'NH' AS USER_OR_SESSION_CD4 
+              , CATEGORY 
+              , VISIT_DATE 
+              , COUNT(USER_OR_SESSION_CD2) AS CNT 
+              FROM TEMP.DLAB_OCM_MSR_AET_WJH AS V1 
+              INNER JOIN (   
+              SELECT TRD_BSE_DT 
+              FROM LAKE.ECBSW_BAS_SLS_DD -- 기본영업일 
+              WHERE TRD_BSE_DT BETWEEN '20230101' AND '20230228' 
+              AND (HDY_DIT_CD = '0' AND WDY_DIT_CD <> '7') 
+              ORDER BY TRD_BSE_DT DESC  
+          ) AS V2  
+          ON V1.VISIT_DATE = V2.TRD_BSE_DT 
+          GROUP BY 1,2,3 
+          ORDER BY 1,2,3 DESC  
+; 
+
+-- 월간클릭수 합계 
+SELECT 'NH' AS USER_OR_SESSION_CD4 
+              , CATEGORY 
+              , SUBSTR(VISIT_DATE,1,6) AS BSE_YM  
+              , COUNT(USER_OR_SESSION_CD2) AS CNT 
+              FROM TEMP.DLAB_OCM_MSR_AET_WJH AS V1 
+          GROUP BY 1,2,3 
+          ORDER BY 1,2,3 DESC  
+; 
+
+-- 건당평균체류시간 
+SELECT 'NH' AS USER_OR_SESSION_CD4 
+    , CATEGORY 
+    , SUBSTR(VISIT_DATE,1,6) AS BSE_YM 
+    , ROUND(AVG(DURATION)/ 1000, 1)  AS SEC  
+FROM TEMP.DLAB_OCM_MSR_AET_WJH  
+WHERE DURATION <= 900000 -- 체류시간 15분 이상 제거  
+GROUP BY 1,2,3 
+ORDER BY 1,2,3 DESC  
+; 
+
+-- 월간 총 체류시간 
+SELECT 'NH' AS USER_OR_SESSION_CD4 
+    , CATEGORY 
+    , SUBSTR(VISIT_DATE,1,6) AS BSE_YM 
+    , ROUND(SUM(DURATION)/ 1000, 1) / 60  AS MIN  
+FROM TEMP.DLAB_OCM_MSR_AET_WJH  
+WHERE DURATION <= 900000 -- 체류시간 15분 이상 제거  
+GROUP BY 1,2,3 
+ORDER BY 1,2,3 DESC  
+; 
+
+-- 월 10분 이상 이용 고객수  
+WITH TMP1 AS ( 
+    SELECT 'NH' AS USER_OR_SESSION_CD4 
+        , CATEGORY 
+        , SUBSTR(VISIT_DATE,1,6) AS BSE_YM 
+        , USER_OR_SESSION_CD2 AS CUS_NO 
+        , ROUND(SUM(DURATION)/ 1000, 1) / 60  AS MIN 
+    FROM TEMP.DLAB_OCM_MSR_AET_WJH  
+    WHERE DURATION <= 900000 -- 체류시간 15분 이상 제거  
+    GROUP BY 1,2,3,4 
+) 
+SELECT USER_OR_SESSION_CD4 
+    ,CATEGORY 
+    ,BSE_YM 
+    ,SUM(CASE WHEN MIN >= 10 THEN 1 ELSE 0 END) AS ABOVE_10MIN   
+FROM TMP1 
+GROUP BY 1,2,3 
+ORDER BY 1,2,3 DESC  
+; 
+
+-- 당월 잔고 50만원 이상 고객비중 
+SELECT 'NH' AS CNL 
+    , CATEGORY 
+    , SUBSTR(VISIT_DATE,1,6) AS BSE_YM 
+    , COALESCE(COUNT(DISTINCT USER_OR_SESSION_CD2),0) AS CNT 
+FROM TEMP.DLAB_OCM_MSR_AET_WJH AS V1 
+WHERE NET_ASSET >= 500000 
+GROUP BY 1,2,3 
+ORDER BY 1,2,3 DESC 
+; 
+
+-- 당월 잔고 1억 이상 고객비중 
+SELECT 'NH' AS CNL 
+    , CATEGORY 
+    , SUBSTR(VISIT_DATE,1,6) AS BSE_YM 
+    , COALESCE(COUNT(DISTINCT USER_OR_SESSION_CD2),0) AS CNT 
+FROM TEMP.DLAB_OCM_MSR_AET_WJH AS V1 
+WHERE NET_ASSET >= 100000000 
+GROUP BY 1,2,3 
+ORDER BY 1,2,3 DESC 
+; 
+
+-- 재방문율  
+WITH TMP1 AS ( 
+SELECT CATEGORY 
+    , SUBSTR(VISIT_DATE,1,6) AS BSE_YM 
+    , USER_OR_SESSION_CD2 AS CUS_NO 
+    , MIN(VISIT_DATE) AS MIN_DATE 
+    , MAX(VISIT_DATE) AS MAX_DATE 
+FROM TEMP.DLAB_OCM_MSR_AET_WJH 
+GROUP BY 1,2,3 
+)  
+SELECT CATEGORY 
+    , BSE_YM  
+    , SUM(CASE WHEN MIN_DATE <> MAX_DATE THEN 1 ELSE 0 END) AS REVISIT 
+FROM TMP1  
+GROUP BY 1,2 
+ORDER BY 1,2 DESC  
+; 
+
+-- 평균연령 
+WITH TMP1 AS ( 
+SELECT DISTINCT CATEGORY 
+    , SUBSTR(VISIT_DATE,1,6) AS BSE_YM  
+    , USER_OR_SESSION_CD2 
+    , CUS_AGE  
+FROM TEMP.DLAB_OCM_MSR_AET_WJH 
+)  
+SELECT CATEGORY 
+  , BSE_YM 
+  , ROUND(AVG(CUS_AGE),2) AS AVERAGE 
+FROM TMP1  
+GROUP BY 1,2 
+ORDER BY 1,2 DESC  
+; 
+
+-- 성비 + 연령구간  
+WITH TMP1 AS ( 
+SELECT CATEGORY 
+    , SUBSTR(VISIT_DATE,1,6) AS BSE_YM 
+    , USER_OR_SESSION_CD2 AS CUS_NO 
+    , CASE WHEN CUS_AGE >= 150 THEN '[0] NULL' 
+          WHEN CUS_AGE >= 100 THEN  '[1] 100 OR OLDER' 
+          WHEN CUS_AGE >= 90 THEN   '[2] 90 OR OLDER' 
+          WHEN CUS_AGE >= 80 THEN   '[3] 80 OR OLDER' 
+          WHEN CUS_AGE >= 70 THEN   '[4] 70 OR OLDER' 
+          WHEN CUS_AGE >= 60 THEN   '[5] 60 OR OLDER' 
+          WHEN CUS_AGE >= 50 THEN   '[6] 50 OR OLDER' 
+          WHEN CUS_AGE >= 40 THEN   '[7] 40 OR OLDER' 
+          WHEN CUS_AGE >= 30 THEN   '[8] 30 OR OLDER' 
+          WHEN CUS_AGE >= 20 THEN   '[9] 20 OR OLDER' 
+          WHEN CUS_AGE < 20 THEN   '[10] 19 OR UNDER' 
+          ELSE '[0] NULL' END AS AGE_GROUP 
+    , CASE WHEN SEX_DIT_CD = '1' THEN 'MALE' 
+      WHEN SEX_DIT_CD = '2' THEN 'FEMALE' 
+      ELSE NULL END AS SEX_DIT_CD 
+FROM TEMP.DLAB_OCM_MSR_AET_WJH 
+) , TMP2 AS ( 
+SELECT CATEGORY 
+    , BSE_YM 
+    , AGE_GROUP AS GROUPER 
+    , COUNT(DISTINCT CUS_NO) AS CNT 
+FROM TMP1  
+WHERE AGE_GROUP <> '[0] NULL' 
+    GROUP BY 1,2,3 
+), TMP3 AS ( 
+SELECT CATEGORY 
+    , BSE_YM 
+    , SEX_DIT_CD AS GROUPER 
+    , COUNT(DISTINCT CUS_NO) AS CNT 
+FROM TMP1  
+WHERE SEX_DIT_CD IS NOT NULL 
+    GROUP BY 1,2,3 
+) 
+SELECT CATEGORY, BSE_YM, GROUPER, CNT  
+FROM TMP2 
+UNION ALL  
+SELECT CATEGORY, BSE_YM, GROUPER, CNT  
+FROM TMP3  
+ORDER BY 1 DESC 
+; 
+
+-- 당월평균 수익기여 금액  
+WITH TMP1 AS ( 
+    SELECT DISTINCT CATEGORY 
+        , SUBSTR(VISIT_DATE,1,6) AS BSE_YM 
+        , USER_OR_SESSION_CD2 
+        , V2.PFT 
+    FROM TEMP.DLAB_OCM_MSR_AET_WJH AS V1 
+    LEFT JOIN ( 
+    SELECT CUS_NO 
+        , BSE_YM 
+        , SUM(MM_PDT_PFT_AMT - RTD_OGT_FEE) AS PFT 
+    FROM LAKE.ERSLM_MM_PDT_ACT_RSL 
+    WHERE BSE_YM BETWEEN '202301' AND '202302' 
+    GROUP BY 1,2  
+)AS V2 
+ON V1.USER_OR_SESSION_CD2 = V2.CUS_NO 
+AND SUBSTR(V1.VISIT_DATE,1,6) = V2.BSE_YM 
+) 
+SELECT CATEGORY 
+    , BSE_YM 
+    , ROUND(AVG(PFT), 2) 
+FROM TMP1 
+GROUP BY 1,2 
+ORDER BY 1,2 DESC 
+; 
+
+-- 전월당월 자산별 구분 (23.02.03) 
+WITH TMP1 AS ( 
+SELECT CATEGORY 
+    , SUBSTR(VISIT_DATE,1,6) AS BSE_YM 
+    , USER_OR_SESSION_CD2 AS CUS_NO 
+    , CASE WHEN NET_ASSET < 30000000 THEN '[0] LESS THEN 30 MILLION' 
+          WHEN NET_ASSET <  100000000 THEN  '[1] LESS THAN 100 MILLION' 
+          WHEN NET_ASSET < 1000000000 THEN   '[2] LESS THAN 1000 MILLION' 
+          WHEN NET_ASSET >= 1000000000  THEN   '[3] 1000 MILLION OR MORE' 
+          ELSE '[5] NULL' END AS GROUPER 
+FROM TEMP.DLAB_OCM_MSR_AET_WJH 
+)  
+SELECT  CATEGORY 
+    , BSE_YM 
+    , GROUPER 
+    , COUNT(DISTINCT CUS_NO) AS CNT 
+FROM TMP1  
+GROUP BY 1,2,3 
+ORDER BY 1,2,3 DESC 
+; 
+
+-- 전월당월 수익별 구분 
+WITH TMP1 AS ( 
+SELECT CATEGORY 
+        , SUBSTR(VISIT_DATE,1,6) AS BSE_YM 
+        , USER_OR_SESSION_CD2 
+        , V2.PFT 
+FROM TEMP.DLAB_OCM_MSR_AET_WJH AS V1 
+LEFT JOIN ( 
+SELECT BSE_YM 
+        , CUS_NO 
+        , CASE WHEN SUM(MM_PDT_PFT_AMT - RTD_OGT_FEE) < 10000 THEN '[0] Less than 10000' 
+    WHEN SUM(MM_PDT_PFT_AMT - RTD_OGT_FEE) < 30000 THEN '[1] Less than 30000' 
+    WHEN SUM(MM_PDT_PFT_AMT - RTD_OGT_FEE) < 50000 THEN '[2] Less than 50000' 
+    WHEN SUM(MM_PDT_PFT_AMT - RTD_OGT_FEE) < 100000 THEN '[3] Less than 100000' 
+    ELSE '[4] 100000 OR MORE' END AS PFT 
+    FROM LAKE.ERSLM_MM_PDT_ACT_RSL 
+    WHERE BSE_YM BETWEEN '202301' AND '202302' 
+    GROUP BY 1,2 
+) AS V2 
+ON V1.USER_OR_SESSION_CD2 = V2.CUS_NO 
+AND SUBSTR(V1.VISIT_DATE,1,6) = V2.BSE_YM 
+) 
+SELECT  CATEGORY 
+    , BSE_YM 
+    , PFT 
+    , COUNT(DISTINCT USER_OR_SESSION_CD2) AS CNT 
+FROM TMP1  
+GROUP BY 1,2,3 
+ORDER BY 1,2,3 DESC 
+; 
+
+-- 전월당월 매매회전율 
+SELECT V1.CATEGORY 
+    , V1.BSE_YM 
+    -- , V1.OPN_DT 
+    , V1.ROTATION 
+    , COUNT(DISTINCT V1.CUS_NO) AS  CNT 
+FROM ( 
+        SELECT CATEGORY 
+            , SUBSTR(VISIT_DATE,1,6) AS BSE_YM 
+            , USER_OR_SESSION_CD2 AS CUS_NO 
+            /*, CASE WHEN SUBSTR(FST_ACT_OPN_DT,1,6) = '202301' THEN '[0] NEWBIE' 
+                  ELSE '[1] OLDIE' END AS OPN_DT 
+            */ 
+            , CASE WHEN TMN_STK_ROT_RT >= 1000 THEN '[0] 1000% OR MORE' 
+                  WHEN TMN_STK_ROT_RT >= 500 THEN '[1] 500% OR MORE' 
+                  WHEN TMN_STK_ROT_RT >= 300 THEN '[2] 300% OR MORE' 
+                  WHEN TMN_STK_ROT_RT >= 100 THEN '[3] 100% OR MORE' 
+                  WHEN TMN_STK_ROT_RT > 0 THEN '[4] MORE THAN 0%' 
+                  WHEN TMN_STK_ROT_RT = 0 THEN '[5] 0' 
+                  ELSE '[6] NULL' END AS ROTATION 
+        FROM TEMP.DLAB_OCM_MSR_AET_WJH 
+) AS V1 
+GROUP BY 1,2,3 
+ORDER BY 1,2,3 DESC 
+; 
+ 
