@@ -1,0 +1,155 @@
+import pandas as pd 
+import numpy as np 
+import requests 
+import os 
+import locale 
+import json 
+import time 
+import math 
+from datetime import datetime, timedelta 
+from googleapiclient.discovery import build 
+from googleapiclient.errors import HttpError 
+from oauth2client.tools import argparser 
+
+start = time.time() 
+print("[", datetime.now() , "] 작업시작") 
+
+# 유튜브 채널명은 채널ID에서 두번째 C를 U로 바꿔주어야함 eg. UCYZJdWwln6Fi0FhaNXLvR7w --> UUYZJdWwln6Fi0FhaNXLvR7w 
+df = pd.DataFrame( 
+[['NH', 'UUYZJdWwln6Fi0FhaNXLvR7w'], 
+['MIRAE', 'UUZS9wEZ4itPbBZk_sqccXfw'], 
+['SAMSUNG', 'UUq7h8qFlHN5FL_T6waKZllw'], 
+['KIWOOM', 'UUZW1d7B2nYqQUiTiOnkirrQ'], 
+['KB', 'UUD0k4Kq7SJROxxV-9N5v8IA'], 
+['TOSS', 'UUwXOKS-z1t9u6Axmm3blXug'], 
+['DAESHIN', 'UUWQf4EtNPWJSEiXEGv9y7nw'], 
+['SYUKA', 'UUsJ6RuBiTVWRX156FVbeaGg'], 
+['3PRO', 'UUhlv4GSd7OQl3js-jkLOnFA'], 
+['SINSA', 'UUaJdckl6MBdDPDf75Ec_bJA'], 
+['KIM_JAKGA', 'UUvil4OAt-zShzkKHsg9EQAw']], columns = ['name', 'cnl_id']) 
+#['MONEYTODAY', 'UUlErHbdZKUnD1NyIUeQWvuQ']], columns = ['name', 'cnl_id']) 
+
+# 채널별 토큰 지정 
+token = (['AIzaSyDU_SXfGdNkOpBZy2b3grGz0s4vN9-7DeE'] * 3 + ['AIzaSyAsPVfl7sqkN9jrjPBGpXTnFa_U8V8FTwY'] * 2 + ['AIzaSyA3NxK5zldLEY4OYhLTDAsRpzsphd4whl8'] * 2 + ['AIzaSyAYoOj8ZmUwa_znPqaYRjtPsxifYTw_QWM'] * 2 + ['AIzaSyAVpmRp_zK-Rhs-xenZslylqt_tEqZWYxs'] * 1 +['AIzaSyAxGS2G0v4QBGwgVySLfW4vHTZ0HIeMa1w'] * 1) 
+
+df['token'] = token 
+
+# 딕셔너리 경쟁사 Loop 진행 
+insertTable = pd.DataFrame() 
+today = datetime.today().strftime('%Y%m%d') 
+
+for u in range(len(df)): 
+    # youtube 설정 
+    DEVELOPER_KEY = df['token'][u] # 유튜브 API 키 값, 
+    # 메인: AIzaSyDU_SXfGdNkOpBZy2b3grGz0s4vN9-7DeE (SB) 
+    # 백업키: AIzaSyAsPVfl7sqkN9jrjPBGpXTnFa_U8V8FTwY / AIzaSyDreODdgmkpt1JRiLEx7s9Yrtvv600Af44 (JH) 
+    # AIzaSyA3NxK5zldLEY4OYhLTDAsRpzsphd4whl8 (JG) 
+    # AIzaSyAYoOj8ZmUwa_znPqaYRjtPsxifYTw_QWM (JJ) 
+    # AlzaSyDn4KmDBChMPQn_5bLe1ADBgR8bIOX4Pb0 (GT) error eccurs!! 
+    # AIzaSyAVpmRp_zK-Rhs-xenZslylqt_tEqZWYxs (SM) 
+    # AIzaSyAxGS2G0v4QBGwgVySLfW4vHTZ0HIeMa1w (YG) 
+
+    YOUTUBE_API_SERVICE_NAME = 'youtube' 
+    YOUTUBE_API_VERSION = 'v3' 
+    youtube = build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, developerKey = DEVELOPER_KEY) 
+
+    try: 
+           playlists = youtube.playlistItems().list( 
+                     part = 'snippet', 
+                     maxResults = 100, 
+                     playlistId = df['cnl_id'][u]).execute() 
+           nextPageToken = playlists.get('nextPageToken') 
+
+           while ('nextPageToken' in playlists): # 다음페이지 토큰값이 존재할 경우, 룹 진행 
+                     nextPage = youtube.playlistItems().list( 
+                     part = 'snippet', 
+                     playlistId = df['cnl_id'][u], 
+                     maxResults = "100", 
+                     pageToken = nextPageToken 
+                     ).execute() 
+                     playlists['items'] = playlists['items'] + nextPage['items'] 
+
+                     if 'nextPageToken' not in nextPage: # nextPageToken 이란 다음 페이지의 정보 값임. 만약 다음 페이지 정보 값이 없다면 토큰값을 제거하고 결과를 중단해야함 
+                                playlists.pop('nextPageToken', None) # 딕셔너리 pop하는 방법임, ''nextPageToken'이 없을 경우, None 처리 
+                     else: 
+                                nextPageToken = nextPage['nextPageToken'] 
+
+           itemTable = pd.DataFrame(columns = ['YTB_CNL_NM', 'YTB_CNL_ID', 'YTB_CTET_ID', 'CTET_TIL_CTS', 'CTET_DESC', 'IMG_ATL_URL', 'MPT_ID', 'CTET_CFC_ID', 'IQR_CNT', 'GDF_CNT', 'COMMENT_CNT', 'RGS_DT',  'BSE_DT']) # 좋아요, 댓글수 포함 
+           itemList = playlists["items"] 
+
+           for i in range(len(itemList)): 
+               list = itemList[i] 
+               itemTable.loc[i, 'YTB_CNL_NM'] = df['name'][u] 
+               itemTable['YTB_CTET_ID'][i] = list["id"] 
+               itemTable['YTB_CNL_ID'][i] = list["snippet"]["playlistId"] 
+
+               # 세계협정시 한국시간으로 변환 
+               ymd = list["snippet"]["publishedAt"][:10].replace('-','') 
+               hms = list["snippet"]["publishedAt"][11:19].replace(':','') 
+               real_time = datetime.strptime(ymd+hms, '%Y%m%d%H%M%S') 
+               real_time = (real_time + timedelta(hours = 9)).strftime('%Y%m%d') 
+
+               itemTable['RGS_DT'][i] = real_time 
+               itemTable['CTET_TIL_CTS'][i] = list["snippet"]["title"] 
+               itemTable['IMG_ATL_URL'][i] = list["snippet"]["thumbnails"]["medium"]["url"] 
+               itemTable['MPT_ID'][i] = list["snippet"]["resourceId"]["videoId"] 
+               itemTable['CTET_DESC'][i] =  list["snippet"]["description"].replace('\n','<br>').replace('\r','<br>') 
+               itemTable['BSE_DT'][i] = today 
+
+               try: 
+                   request = youtube.videos().list(part= 'snippet, contentDetails, statistics', id = itemTable['MPT_ID'][i]) 
+                   response = request.execute() 
+
+
+                   if response['items'] == []: 
+                       itemTable['CTET_CFC_ID'][i] = '_' 
+                       itemTable['IQR_CNT'][i] = 0 
+                       itemTable['GDF_CNT'][i] = 0 
+                       itemTable['COMMENT_CNT'][i] = 0 
+
+                   else: 
+                       itemTable['CTET_CFC_ID'][i] =          response['items'][0]['snippet']['categoryId'] 
+                       itemTable['IQR_CNT'][i] =       response['items'][0]['statistics']['viewCount'] 
+                       itemTable['GDF_CNT'][i] =                 response['items'][0]['statistics']['likeCount'] 
+                       itemTable['COMMENT_CNT'][i] = response['items'][0]['statistics']['commentCount'] 
+
+               except Exception as e: 
+                   # print("Error occurred: ", e) 
+                   pass 
+
+                   itemTable['CTET_CFC_ID'][i] = '_' 
+                   itemTable['IQR_CNT'][i] = 0 
+                   itemTable['GDF_CNT'][i] = 0 
+                   itemTable['COMMENT_CNT'][i] = 0 
+
+           insertTable = insertTable.append(itemTable, ignore_index = True) 
+
+    except Exception as e: 
+        print("[",datetime.now(),"] ERROR : ", e) 
+        continue 
+
+insertTable['CTET_DESC'] = insertTable['CTET_DESC'].replace(np.nan, '_') 
+insertTable['BSE_DT'] = insertTable['BSE_DT'].astype(str).str[:8] 
+insertTable = insertTable.applymap(lambda x: str(x).replace("|", "")) 
+insertTable = insertTable.applymap(lambda x: x.replace("  ", "")) 
+
+cnt_col = [x for x in insertTable.columns if x.endswith('CNT')] 
+insertTable[cnt_col] = insertTable[cnt_col].astype(float).replace(np.nan,0) 
+insertTable = insertTable[~np.any(insertTable.isna(), axis = 1)].reset_index(drop = True) 
+insertTable = insertTable.drop(index = insertTable[insertTable['YTB_CTET_ID'] == 'VVV2aWw0T0F0LXpTaHprS0hzZzlFUUF3LnNvbWFXNW1jc3ZF'].index).reset_index(drop = True) 
+
+insertTable.to_csv(f"/data/WebCrawl/youtube_competitors_{today}.csv",encoding="utf-8-sig",sep= "|", index = False) 
+insertTable.to_csv(f"/data/WebCrawl/youtube_competitors_{today}_tester.csv",encoding="utf-8-sig",sep= "|", index = False) 
+
+txt_to_write = '' 
+with open(f"/data/WebCrawl/youtube_competitors_{today}.csv", mode="r") as csv_file: 
+         txt = csv_file.read() 
+         txt_to_write = txt.replace("|", "|*|") 
+
+with open(f"/data/WebCrawl/youtube_competitors_{today}.csv", mode="w") as csv_file: 
+         csv_file.write(txt_to_write) 
+
+print("[",datetime.now(),"] 작업종료") 
+print("[ 작업 소요 시간(s)] ", math.trunc(time.time() - start)) 
+
+ 
