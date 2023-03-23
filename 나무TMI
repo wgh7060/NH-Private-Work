@@ -1,0 +1,395 @@
+-- 나무의미신왕 연령별 화면 월 평균 이용 횟수  
+-- 연령별 화면 월 평균 이용 횟수 (1)   
+with tmp1 as ( 
+SELECT USER_OR_SESSION_CD2  
+    , SCREENNAME 
+    -- , V3.CUS_AGE 
+    , V3.CUS_BDT 
+    , SCRN_CNT 
+FROM ( 
+        SELECT SUBSTR(VISIT_DATE,1,6) AS BSE_YM  
+                , USER_OR_SESSION_CD2 
+                , SCREENNAME 
+                , COUNT(1) AS SCRN_CNT 
+        FROM lake.cus_epc_dat_namuh_smpc 
+        where substr(visit_date,1,6) between '202212' and '202302'  
+        and type = 'APPVIEW' 
+        and user_or_session_cd2 is not null 
+        and user_or_session_cd3 = 'MTS' 
+        and user_or_session_cd4 = 'NAMUH' 
+        GROUP BY 1,2,3 
+) AS V1 
+LEFT OUTER JOIN ( 
+    SELECT DISTINCT V1.CUS_NO 
+        , V1.CUS_AGE 
+        , substr(V1.CUS_BDT,1,4) as cus_bdt 
+    FROM LAKE.EDIMM_CUS AS V1 -- 고객별 계좌개설일 
+    WHERE V1.CUS_AGE <= 120 
+) AS V3 
+ON V1.USER_OR_SESSION_CD2 = V3.CUS_NO 
+), tmp2 as ( 
+SELECT CASE WHEN CUS_BDT <= 1969 THEN '[0] 베이비붐' 
+    WHEN CUS_BDT <= 1979 THEN '[1] X세대' 
+    WHEN CUS_BDT <= 1996 THEN '[2] 밀레니엄' 
+    ELSE '[3] Z세대' end as age_interval 
+    , TRIM(regexp_extract(SCREENNAME,'](.+):', 1)) as screenname 
+    , round(avg(scrn_cnt),2) as scrn_average 
+    , count(distinct user_or_session_cd2) as cus_cnt 
+from tmp1  
+group by 1,2 
+order by 1,2 
+), tmp3 as( 
+select * 
+    , row_number() over(partition by age_interval order by cus_cnt desc) as rn 
+from tmp2  
+)  
+select * from tmp3  
+where rn <= 10  
+; 
+
+-- 나무의미신왕 연령별 화면 월 평균 이용 횟수 
+-- 고객별 월별 방문횟수 및 연령정보(월별 방문한 화면횟수) (2)  
+with tmp1 as ( 
+SELECT USER_OR_SESSION_CD2  
+    -- , V3.CUS_AGE 
+    , V3.CUS_BDT 
+    , SCRN_CNT 
+FROM ( 
+        SELECT SUBSTR(VISIT_DATE,1,6) AS BSE_YM  
+                , USER_OR_SESSION_CD2 
+                , COUNT(distinct screenname) AS SCRN_CNT 
+        FROM lake.cus_epc_dat_namuh_smpc 
+        where substr(visit_date,1,6) between '202212' and '202302'  
+        and type = 'APPVIEW' 
+        and user_or_session_cd2 is not null 
+        and user_or_session_cd3 = 'MTS' 
+        and user_or_session_cd4 = 'NAMUH' 
+        GROUP BY 1,2 
+) AS V1 
+LEFT OUTER JOIN ( 
+    SELECT DISTINCT V1.CUS_NO 
+        , V1.CUS_AGE 
+        , substr(V1.CUS_BDT,1,4) as cus_bdt 
+    FROM LAKE.EDIMM_CUS AS V1 
+    WHERE V1.CUS_AGE <= 120 
+) AS V3 
+ON V1.USER_OR_SESSION_CD2 = V3.CUS_NO 
+) 
+SELECT CASE WHEN CUS_BDT <= 1969 THEN '[0] 베이비붐' 
+    WHEN CUS_BDT <= 1979 THEN '[1] X세대' 
+    WHEN CUS_BDT <= 1996 THEN '[2] 밀레니엄' 
+    ELSE '[3] Z세대' end as age_interval 
+    , round(avg(scrn_cnt),2) as scrn_average 
+    , count(distinct user_or_session_cd2) as cus_cnt 
+from tmp1  
+group by 1 
+; 
+
+
+-- 나무의 인기 메뉴 
+--.연령별 클릭 이벤트가 가장 많았던 메뉴 
+with tmp1 as ( 
+SELECT USER_OR_SESSION_CD2  
+    , SCREENNAME 
+    -- , V3.CUS_AGE 
+    , V3.CUS_BDT 
+    , SCRN_CNT 
+FROM ( 
+        SELECT SUBSTR(VISIT_DATE,1,6) AS BSE_YM  
+                , USER_OR_SESSION_CD2 
+                , SCREENNAME 
+                , COUNT(1) AS SCRN_CNT 
+        FROM lake.cus_epc_dat_namuh_smpc 
+        where substr(visit_date,1,6) between '202212' and '202302'  
+        and type = 'EVENT' 
+        and user_or_session_cd2 is not null 
+        and user_or_session_cd3 = 'MTS' 
+        and user_or_session_cd4 = 'NAMUH' 
+        GROUP BY 1,2,3 
+) AS V1 
+LEFT OUTER JOIN ( 
+    SELECT DISTINCT V1.CUS_NO 
+        , V1.CUS_AGE 
+        , substr(V1.CUS_BDT,1,4) as cus_bdt 
+    FROM LAKE.EDIMM_CUS AS V1 -- 고객별 계좌개설일 
+    WHERE V1.CUS_AGE <= 120 
+) AS V3 
+ON V1.USER_OR_SESSION_CD2 = V3.CUS_NO 
+), tmp2 as ( 
+SELECT CASE WHEN CUS_BDT <= 1969 THEN '[0] 베이비붐' 
+    WHEN CUS_BDT <= 1979 THEN '[1] X세대' 
+    WHEN CUS_BDT <= 1996 THEN '[2] 밀레니엄' 
+    ELSE '[3] Z세대' end as age_interval 
+    , TRIM(regexp_extract(SCREENNAME,'](.+):', 1)) as screenname 
+    , round(avg(scrn_cnt),2) as scrn_average 
+    , count(distinct user_or_session_cd2) as cus_cnt 
+from tmp1  
+group by 1,2 
+order by 1,2 
+), tmp3 as( 
+select * 
+    , row_number() over(partition by age_interval order by cus_cnt desc) as rn 
+from tmp2  
+)  
+select * from tmp3  
+where rn <= 10  
+; 
+
+
+-- 나무에서 몇 명이나 모일 수 있을까 
+-- MAX DAU 
+with tmp1 as ( 
+select visit_date 
+    , count(distinct user_or_session_cd2) as cus_cnt 
+from lake.cus_epc_dat_namuh_smpc 
+where substr(visit_date,1,6) between '202212' and '202302'  
+and user_or_session_cd2 is not null 
+and user_or_session_cd3 = 'MTS' 
+and user_or_session_cd4 = 'NAMUH' 
+group by 1 
+) 
+select visit_date 
+    , cus_cnt 
+from tmp1  
+where cus_cnt = (select max(cus_cnt) from tmp1) 
+; 
+
+-- MAU 
+select substr(visit_date, 1, 6) as bse_ym 
+    , count(distinct user_or_session_cd2) as cus_cnt 
+from lake.cus_epc_dat_namuh_smpc 
+where substr(visit_date,1,6) between '202212' and '202302'  
+and user_or_session_cd2 is not null 
+and user_or_session_cd3 = 'MTS' 
+and user_or_session_cd4 = 'NAMUH' 
+group by 1 
+; 
+
+-- 최대 동시접속자 수는 000경기장을 몇 개 채울 수 있어요~ 
+-- 최대사용자 동시접속일  
+with tmp1 as ( 
+select visit_date 
+    -- , from_unixtime(visitstarttime + 32400) as kst -- 세션타임: 한국시간 +9 시간, 썸머타임 시작하면 자동변경필수 
+    , SUBSTR(FROM_UNIXTIME(visitstarttime + 32400), -8, 2) AS VISIT_HOUR -- 뒤에서부터 8칸 시간만 (끝까지) 자르기 
+    , count(distinct user_or_session_cd2) as cus_cnt 
+from lake.cus_epc_dat_namuh_smpc as v1  
+INNER JOIN (  
+                    SELECT  TRD_BSE_DT 
+                    FROM   LAKE.ECBSW_BAS_SLS_DD --주말을 제외한 평균 영업일을 구하기 위함  
+                    WHERE  BSE_SLS_DT_DIT_CD = '001' 
+                    AND    substr(BSE_SLS_DT,1,6) BETWEEN '202212' AND '202302' 
+                    AND    (HDY_DIT_CD = '0' AND WDY_DIT_CD <> '7')  
+                ) AS V4 
+ON V1.VISIT_DATE = V4.TRD_BSE_DT 
+where substr(visit_date,1,6) between '202212' and '202302'   
+and user_or_session_cd2 is not null 
+and user_or_session_cd3 = 'MTS' 
+and user_or_session_cd4 = 'NAMUH' 
+group by 1,2 
+) 
+select visit_date 
+    , visit_hour 
+    , cus_cnt 
+from tmp1  
+where cus_cnt = (select max(cus_cnt) from tmp1) 
+; 
+
+
+-- 나무에서 제일 많이 시간을 보낸 사람은 OO일을 숨도 안쉬고 일했어요 
+-- 가장 긴 시간 접속한 사용자의 일평균 세션 시간 
+with tmp1 as ( 
+        select visit_date 
+            , user_or_session_cd2 
+            , visitstarttime 
+            , hits_time 
+            , screenname 
+            , max(hits_time) over(partition by visit_date, user_or_session_cd2, visitstarttime order by hits_time) as max_time 
+            , min(hits_time) over(partition by visit_date, user_or_session_cd2, visitstarttime order by hits_time) as min_time 
+        from lake.cus_epc_dat_namuh_smpc as v1 
+        INNER JOIN (  
+                    SELECT  TRD_BSE_DT 
+                    FROM   LAKE.ECBSW_BAS_SLS_DD --주말을 제외한 평균 영업일을 구하기 위함  
+                    WHERE  BSE_SLS_DT_DIT_CD = '001' 
+                    AND    substr(BSE_SLS_DT,1,6) BETWEEN '202212' AND '202302' 
+                    AND    (HDY_DIT_CD = '0' AND WDY_DIT_CD <> '7')  
+                ) AS V4 
+        ON V1.VISIT_DATE = V4.TRD_BSE_DT 
+        where substr(visit_date,1,6) between '202212' and '202302'  
+        and user_or_session_cd2 is not null 
+        and user_or_session_cd3 = 'MTS' 
+        and user_or_session_cd4 = 'NAMUH' 
+        and type = 'APPVIEW' 
+        ), tmp2 as ( 
+        select visit_date 
+            , user_or_session_cd2 
+            , visitstarttime 
+            , min_time 
+            , max(max_time) as max_time 
+        from tmp1  
+        group by 1,2,3,4 
+  ), tmp3 as ( 
+  -- 세션별 체류시간 구하기 
+  select visit_date 
+      , user_or_session_cd2 
+      , visitstarttime 
+      , min_time 
+      , max_time 
+      , (max_time - min_time) as duration  
+  from tmp2    
+), tmp4 as (  
+-- 일기준 세션별 합산 및 초 구하기  
+select visit_date 
+    , user_or_session_cd2 
+    , round(sum(duration)/1000, 1) / 60 as sum_min 
+from tmp3 
+group by 1,2 
+), tmp5 as ( 
+-- 월별 일평균 세션시간 
+select user_or_session_cd2, round(avg(sum_min),1) as session_avg_min 
+from tmp4 
+group by 1 
+-- 일평균 세션시간이 가장 긴 접속자 
+) select * from tmp5 
+where session_avg_min = (select max(session_avg_min) from tmp5) 
+; 
+
+
+-- 1인 평균 체류시간은 넷플릭스랑 맞먹는다 & 나무 광팬 
+-- .연령별 월평균 체류시간 
+with tmp1 as ( 
+        select visit_date 
+            , user_or_session_cd2 
+            , visitstarttime 
+            , hits_time 
+            , screenname 
+            , max(hits_time) over(partition by visit_date, user_or_session_cd2, visitstarttime order by hits_time) as max_time 
+            , min(hits_time) over(partition by visit_date, user_or_session_cd2, visitstarttime order by hits_time) as min_time 
+        from lake.cus_epc_dat_namuh_smpc as v1 
+        INNER JOIN (  
+                    SELECT  TRD_BSE_DT 
+                    FROM   LAKE.ECBSW_BAS_SLS_DD --주말을 제외한 평균 영업일을 구하기 위함  
+                    WHERE  BSE_SLS_DT_DIT_CD = '001' 
+                    AND    substr(BSE_SLS_DT,1,6) BETWEEN '202212' AND '202302' 
+                    AND    (HDY_DIT_CD = '0' AND WDY_DIT_CD <> '7')  
+                ) AS V4 
+        ON V1.VISIT_DATE = V4.TRD_BSE_DT 
+        where substr(visit_date,1,6) between '202212' and '202302'  
+        and user_or_session_cd2 is not null 
+        and user_or_session_cd3 = 'MTS' 
+        and user_or_session_cd4 = 'NAMUH' 
+        and type = 'APPVIEW' 
+        ), tmp2 as ( 
+        select visit_date 
+            , user_or_session_cd2 
+            , visitstarttime 
+            , min_time 
+            , max(max_time) as max_time 
+        from tmp1  
+        group by 1,2,3,4 
+  ), tmp3 as ( 
+  -- 세션별 체류시간 구하기 
+  select visit_date 
+      , user_or_session_cd2 
+      , visitstarttime 
+      , min_time 
+      , max_time 
+      , (max_time - min_time) as duration  
+  from tmp2    
+), tmp4 as (  
+-- 월체류시간 구하기   
+select substr(visit_date,1,6) as bse_ym  
+    , user_or_session_cd2 
+    , round(sum(duration)/1000, 1) / 60 as sum_min 
+from tmp3 
+group by 1,2 
+), tmp5 as ( 
+-- 고객별 월평균 체류시간 구하기 
+select user_or_session_cd2, round(avg(sum_min),1) as session_avg_min 
+from tmp4 
+group by 1 
+) 
+SELECT CASE WHEN CUS_BDT <= 1969 THEN '[0] 베이비붐' 
+    WHEN CUS_BDT <= 1979 THEN '[1] X세대' 
+    WHEN CUS_BDT <= 1996 THEN '[2] 밀레니엄' 
+    ELSE '[3] Z세대' end as age_interval 
+    , round(avg(session_avg_min),1) as average_mins 
+from tmp5 as v1 
+-- 연령 조인 
+LEFT OUTER JOIN ( 
+    SELECT DISTINCT V1.CUS_NO 
+        , V1.CUS_AGE 
+        , substr(V1.CUS_BDT,1,4) as cus_bdt 
+    FROM LAKE.EDIMM_CUS AS V1 -- 고객별 계좌개설일 
+    WHERE V1.CUS_AGE <= 120 
+) AS V3 
+ON V1.USER_OR_SESSION_CD2 = V3.CUS_NO 
+group by 1 
+order by 1 
+; 
+
+
+-- 참을성 제로 유저 - 잔고 확인 가장 자주/많이 한 유저는 하루에 n회 확인 (또는 누적 n 회 확인) 
+-- 하루 최대 접속고객  
+with tmp1 as ( 
+select * from lake.cus_epc_dat_namuh_smpc 
+where substr(visit_date,1,6) between '202212' and '202302'  
+and screenname in ('[4210] 국내주식잔고손익 : X07m4210', '[4110] 계좌잔고 : X07m4110', '[3550] 해외주식잔고/손익 : X06m3550') 
+and type = 'APPVIEW' 
+and user_or_session_cd2 is not null 
+and user_or_session_cd3 = 'MTS' 
+and user_or_session_cd4 = 'NAMUH' 
+), tmp2 as ( 
+select visit_date 
+    , user_or_session_cd2 
+    , screenname 
+    , count(1) as cnt 
+from tmp1  
+group by 1,2,3 
+) 
+select distinct screenname 
+    , max(cnt) over(partition by screenname) as max_cnt 
+    -- , min(cnt) over(partition by screenname) as min_cnt 
+from tmp2  
+; 
+
+-- 고객별 잔고화면 평균조회수 상/하위 5고객 
+with tmp1 as ( 
+select * from lake.cus_epc_dat_namuh_smpc as v1 
+INNER JOIN (  
+                    SELECT  TRD_BSE_DT 
+                    FROM   LAKE.ECBSW_BAS_SLS_DD --주말을 제외한 평균 영업일을 구하기 위함  
+                    WHERE  BSE_SLS_DT_DIT_CD = '001' 
+                    AND    substr(BSE_SLS_DT,1,6) BETWEEN '202212' AND '202302' 
+                    AND    (HDY_DIT_CD = '0' AND WDY_DIT_CD <> '7')  
+                ) AS V4 
+ON V1.VISIT_DATE = V4.TRD_BSE_DT 
+where substr(visit_date,1,6) between '202212' and '202302'  
+and screenname in ('[4210] 국내주식잔고손익 : X07m4210', '[4110] 계좌잔고 : X07m4110', '[3550] 해외주식잔고/손익 : X06m3550') 
+and type = 'APPVIEW' 
+and user_or_session_cd2 is not null 
+and user_or_session_cd3 = 'MTS' 
+and user_or_session_cd4 = 'NAMUH' 
+), tmp2 as ( 
+select visit_date 
+    , user_or_session_cd2 
+    , screenname 
+    , count(1) as cnt 
+from tmp1  
+group by 1,2,3 
+), tmp3 as ( 
+select user_or_session_cd2 
+    , screenname 
+    , round(avg(cnt),1) as cnt_avg 
+from tmp2 
+group by 1,2 
+), tmp4 as ( 
+select * 
+    , row_number() over(partition by screenname order by cnt_avg desc) as rn 
+    , row_number() over(partition by screenname order by cnt_avg ) as rn_inv  
+from tmp3  
+)  
+select * from tmp4 
+where rn <= 5 
+or rn_inv <= 5 
+; 
+ 
