@@ -1,0 +1,44 @@
+02 10 * * 1-5 /data/robo/data_crawler.sh > /data/robo/data_crawler.log & 
+
+00 05 * * 1-5 /data/robo/data_crawler.sh > /data/robo/data_crawler.log & 
+
+00 11 * * 1-5 /data/robo/data_crawler.sh > /data/robo/data_crawler.log & 
+
+#telegram monitoring 
+00 07 * * 1-5  /home/robo/monitor/file_check.sh 
+
+#slack monitoring 
+00 07 * * 1-5  /home/robo/monitor/file_check2.sh 
+
+# WebCrawl (Naver) 
+0 1 * * * /usr/local/bin/python3.6 /home/robo/batch/newsCrawling.py > /data/robo/logs/newsCrawling_`date "+\%Y\%m\%d"`.log 2>&1 
+#15 15 * * * /usr/local/bin/python3.6 /home/robo/batch/backup/newsCrawling20230206.py > /data/robo/logs/test/newsCrawling_`date "+\%Y\%m\%d"`.log 2>&1 
+
+#Open API for stock and etf 
+#0 4 * * * /usr/local/bin/python3.6 /home/robo/64732/src/open_api.py > /home/robo/64732/log/log.log 2>&1 
+
+
+#APT_Crawling(API) 
+#00 03 * * * /usr/local/bin/python3.6 /home/robo/batch/apt_Crawling.py > /data/robo/logs/apt_Crawling_`date "+\%Y\%m\%d"`.log 2>&1 
+#28 15 * * * /usr/local/bin/python3.6 /home/robo/batch/backup/apt_Crawling20230206.py >> /data/robo/logs/test/apt_Crawling_`date "+\%Y\%m\%d"`.log 2>&1 
+
+#IPO_Crawling(Scraping) 
+#00 07 * * * /usr/local/bin/python3.6 /home/robo/batch/IPO_Crawling_batch_new.py > /home/robo/log/IPO_Crawling.log 2>&1 
+
+#Youtube_Crawling(Scraping) 
+0 0 * * * /usr/local/bin/python3.6 /home/robo/batch/youtube_list.py > /data/robo/logs/youtube_list_`date "+\%Y\%m\%d"`.log 2>&1 
+#25 15 * * * /usr/local/bin/python3.6 /home/robo/batch/backup/youtube_list20230206.py > /data/robo/logs/test/youtube_list_`date "+\%Y\%m\%d"`.log 2>&1 
+
+#Upbit Crawling(API) 
+#00 02 * * * /usr/local/bin/python3.6 /home/robo/batch/upbit_crawling.py > /home/robo/log/upbit_crawling.log 2>&1 
+
+#Card_Crawling(Scraping) 
+#10 02 * * * /usr/local/bin/python3.6 /home/robo/batch/card_list_crawling.py > /home/robo/log/card_list_crawling.log 2>&1 
+
+#Youtube_competitors 
+00 01 * * * /usr/local/bin/python3.6 /home/robo/batch/youtube_competitors.py > /data/robo/logs/youtube_competitors_`date "+\%Y\%m\%d"`.log 2>&1 
+#30 15 * * * /usr/local/bin/python3.6 /home/robo/batch/backup/youtube_competitors20230206.py > /data/robo/logs/test/youtube_competitors_`date "+\%Y\%m\%d"`.log 2>&1 
+
+#test 
+#30 09 * * * /home/robo/batch/shell_script_practice.sh > /home/robo/log/test/shell_script_practice_`date "+\%Y\%m\%d"`.log 2>&1 
+ 
