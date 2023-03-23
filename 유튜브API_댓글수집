@@ -1,0 +1,82 @@
+import pandas as pd 
+import numpy as np 
+import datetime 
+import requests 
+import os 
+import locale 
+import json 
+from googleapiclient.discovery import build 
+from googleapiclient.errors import HttpError 
+from oauth2client.tools import argparser 
+import warnings 
+warnings.filterwarnings('ignore') 
+
+today = '20221226' # datetime.datetime.today().strftime('%Y%m%d') 
+# pd.read_csv(f'/data/WebCrawl/youtube_competitors_{today}.csv', sep = '|') # 방법1 
+df = pd.read_csv('/data/WebCrawl/youtube_competitors_{0}.csv'.format(today), sep = '|') # 방법2 
+
+drops = [col for col in df.columns if col.startswith('*')] 
+df.drop(columns = drops, inplace = True) 
+
+# youtube 설정 
+DEVELOPER_KEY = "AIzaSyDU_SXfGdNkOpBZy2b3grGz0s4vN9-7DeE" # 유튜브 API 키 값 
+YOUTUBE_API_SERVICE_NAME = 'youtube' 
+YOUTUBE_API_VERSION = 'v3' 
+
+# 구글API 객체 생성 
+youtube = build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, developerKey = DEVELOPER_KEY) 
+
+# 댓글리스트 생성 
+insertTable = pd.DataFrame() 
+comments = [] 
+
+# 컨텐츠별로 Loop 진행 
+# videoId =  df.MPT_ID[0] # 'WSYGOneAcWo' # 'ZPY6KVFF0HQ' #MPT_ID로 조회할 것 
+for videoId in df.MPT_ID[100:110]: 
+    try: 
+        response = youtube.commentThreads().list(part = 'snippet,replies', videoId = videoId, maxResults = 100).execute() 
+        nextPageToken = response.get('nextPageToken') # None 체크 
+
+        while 'nextPageToken' in response: 
+            response_surp = youtube.commentThreads().list(part = 'snippet,replies', videoId = videoId, maxResults = 100).execute() 
+            response['items'] = response['items'] + response_surp['items'] 
+
+            if nextPageToken is None: 
+                response_surp.pop('nextPageToken', None) 
+                break 
+                print('debug1') 
+            else: 
+                nextPageToken = response_surp.get('nextPageToken') 
+
+        # (댓글은 'snippet' vs. 답글은 'replies'로 저장되어 있음) 
+        for item in response['items']: 
+            # 쇼츠 영상의 경우 댓글이 없을 경우 발생 
+            if response['items'] == []: 
+                comments.append([videoId, '', '', '', '', '']) # blank 수를 맞춰줘야 될 수도 있음 
+
+            else: 
+                # 모든 댓글에 대해서 Loop 진행 
+                comment = item['snippet']['topLevelComment']['snippet'] 
+                comments.append([videoId, 'Comment', comment['textDisplay'], comment['authorDisplayName'], comment['publishedAt'][:10].replace('-', ''), comment['likeCount']]) 
+
+                # 모든 답글에 대한 Loop 처리 (댓글정보 안의 답글 기록이 있으면 Loop 실행 ) 
+                if item['snippet']['totalReplyCount'] > 0: 
+
+                    for reply_item in item['replies']['comments']: 
+                        reply = reply_item['snippet'] 
+                        comments.append([videoId, 'Reply', reply['textDisplay'], reply['authorDisplayName'], reply['publishedAt'][:10].replace('-', ''), reply['likeCount']]) 
+    except Exception as e: 
+        break 
+        print("Error occurred: ", e) 
+
+insertTable = pd.DataFrame(comments, columns = ['videoId', 'code', 'textDisplay', 'authorDisplayName', 'date', 'likeCount']) 
+insertTable.to_csv(f"/data/WebCrawl/youtube_comments_{today}.csv",encoding="utf-8-sig",sep= "|", index = False) 
+
+txt_to_write = '' 
+with open(f"/data/WebCrawl/youtube_comments_{today}.csv", mode="r") as csv_file: 
+         txt = csv_file.read() 
+         txt_to_write = txt.replace("|", "|*|") 
+
+with open(f"/data/WebCrawl/youtube_comments_{today}.csv", mode="w") as csv_file: 
+         csv_file.write(txt_to_write) 
+ 
