@@ -1,0 +1,100 @@
+import pandas as pd 
+import numpy as np 
+import datetime 
+import requests 
+import os 
+import locale 
+import json 
+import time 
+import math 
+from googleapiclient.discovery import build 
+from googleapiclient.errors import HttpError 
+from oauth2client.tools import argparser 
+
+os.environ["PYTHONIOENCODING"] = "utf-8" 
+myLocale = locale.setlocale(category=locale.LC_ALL, locale="en_GB.UTF-8") 
+
+api_url = "https://www.googleapis.com/youtube/v3/playlistItems" 
+part = "?part=snippet" 
+playlistId = "&playlistId=UUYZJdWwln6Fi0FhaNXLvR7w" 
+key = "&key=AIzaSyDreODdgmkpt1JRiLEx7s9Yrtvv600Af44" 
+maxResults = "&maxResults=50" 
+
+request_uri = api_url + part + playlistId + key + maxResults 
+
+start = time.time() 
+print("[", datetime.datetime.now() , "] 작업시작") 
+
+insertTable = pd.DataFrame() 
+try: 
+    # Get raw data 
+    result = requests.get(request_uri, verify=False).json() 
+    nextPageToken = result["nextPageToken"] 
+
+    today = datetime.datetime.today().strftime('%Y%m%d') 
+    check = True 
+    # f = open(f"/data/WebCrawl/youtubeContents_{today}.csv",mode="w",encoding="utf-8-sig") 
+    # f.write('CTET_ID|*|CNL_ID|*|CTET_RGS_DT|*|CTEL_TIL_NM|*|CTET_IMG_URL|*|MPT_ID|*|CTET_DSC|*|BSE_DT\n') 
+    while check: 
+
+        itemTable = pd.DataFrame(columns = ['CTET_ID', 'CNL_ID', 'CTET_RGS_DT', 'CTET_TIL_NM', 'CTET_IMG_URL', 'MPT_ID', 'CTET_DESC', 'CFC_ID', 'IQR_CNT', 'BSE_DT']) 
+        itemList = result["items"] 
+
+        for i in range(len(itemList)): 
+            list = itemList[i] 
+            itemTable.loc[i, 'CTET_ID'] = list["id"] 
+            itemTable['CNL_ID'][i] = list["snippet"]["playlistId"] 
+            itemTable['CTET_RGS_DT'][i] = list["snippet"]["publishedAt"][:10].replace('-','') 
+            itemTable['CTET_TIL_NM'][i] = list["snippet"]["title"] 
+            itemTable['CTET_IMG_URL'][i] = list["snippet"]["thumbnails"]["medium"]["url"] 
+            itemTable['MPT_ID'][i] = list["snippet"]["resourceId"]["videoId"] 
+            itemTable['CTET_DESC'][i] =  list["snippet"]["description"].replace('\n','<br>').replace('\r','<br>') 
+            itemTable['BSE_DT'][i] = today 
+        insertTable = insertTable.append(itemTable, ignore_index = True) 
+        if nextPageToken is None: 
+            check = False 
+            break 
+        else: 
+            result = requests.get(request_uri + "&pageToken=" + nextPageToken, verify=False).json() 
+            nextPageToken = result["nextPageToken"] 
+
+except Exception as e: 
+        print("[",datetime.datetime.now(),"] ERROR : ",e) 
+
+
+key2 = "AIzaSyDreODdgmkpt1JRiLEx7s9Yrtvv600Af44" 
+youtube = build('youtube','v3', developerKey = key2) 
+
+for u in range(len(insertTable)): 
+    try: 
+        request = youtube.videos().list(part= 'snippet, contentDetails, statistics', id = insertTable['MPT_ID'][u]) 
+        response = request.execute() 
+
+        if response['items'] == []: 
+            insertTable['CFC_ID'][u] = '_' 
+            insertTable['IQR_CNT'][u] = '_' 
+
+        else: 
+            insertTable['CFC_ID'][u] = response['items'][0]['snippet']['categoryId'] 
+            insertTable['IQR_CNT'][u] = response['items'][0]['statistics']['viewCount'] 
+
+    except Exception as e: 
+        # print(e) 
+
+        insertTable['CFC_ID'][u] = '_' 
+        insertTable['IQR_CNT'][u] = 0 
+
+insertTable = insertTable.applymap(lambda x: str(x).replace("|", "")) 
+insertTable['IQR_CNT'] = insertTable['IQR_CNT'].astype(float).replace(np.nan,0) 
+insertTable.to_csv(f"/data/WebCrawl/youtubeContents_{today}.csv",encoding="utf-8-sig",sep= "|", index = False) 
+
+txt_to_write = '' 
+with open(f"/data/WebCrawl/youtubeContents_{today}.csv", mode="r") as csv_file: 
+    txt = csv_file.read() 
+    txt_to_write = txt.replace("|", "|*|") 
+
+with open(f"/data/WebCrawl/youtubeContents_{today}.csv", mode="w") as csv_file: 
+    csv_file.write(txt_to_write) 
+
+print("[",datetime.datetime.now(),"] 작업종료") 
+print("[ 작업 소요 시간(s)] ", math.trunc(time.time() - start))  
