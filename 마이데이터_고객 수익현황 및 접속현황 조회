@@ -1,0 +1,81 @@
+-- Monthly 쿼리 먼저 실행 후 진행  
+SELECT             V1.고객번호 
+                ,V2.총수익 AS 수익_총수익 
+                ,V2.국내주식 AS 수익_국내주식 
+                ,V2.해외주식 AS 수익_해외주식 
+                ,V2.이자수익 AS 수익_이자수익 
+                ,V2.금상수익 AS 수익_금상수익 
+                ,V3.접속횟수 AS 접속횟수 
+                ,V3.접속일수 AS 접속일수 
+                ,V4.접속화면수 AS 접속화면수  
+INTO #MTS_USAGE 
+FROM #MYDATA_01 AS V1 
+LEFT OUTER JOIN ( 
+    SELECT CUS_NO 
+            ,SUM(MM_PDT_PFT_AMT - RTD_OGT_FEE) AS 총수익 
+            ,SUM(CASE WHEN LEFT(IEM_SLF_CD,2) = '01' THEN MM_PDT_PFT_AMT - RTD_OGT_FEE ELSE 0 END) AS 국내주식 
+            ,SUM(CASE WHEN LEFT(IEM_SLF_CD,2) = '15' THEN MM_PDT_PFT_AMT - RTD_OGT_FEE ELSE 0 END) AS 해외주식 
+            ,SUM(CASE WHEN LEFT(IEM_SLF_CD,2) = '12' THEN MM_PDT_PFT_AMT - RTD_OGT_FEE ELSE 0 END) AS 이자수익 
+            ,총수익 - 국내주식 - 해외주식 - 이자수익 AS 금상수익 
+    FROM ERSLM_MM_PDT_ACT_RSL AS V1 
+    WHERE  V1.BSE_YM                   BETWEEN (SELECT SUBSTR(CONVERT(VARCHAR, DATEADD(MONTH, -8, VS_작업일), 112),1,6)) AND VS_월작업일     
+    GROUP BY CUS_NO 
+) AS V2 
+ON V1.고객번호 = V2.CUS_NO 
+-- MTS 활용현황 (MTS접속횟수) 
+LEFT OUTER JOIN ( 
+SELECT         CUS_NO 
+           ,AVG(월접속횟수) AS 접속횟수 
+           ,AVG(월접속일수) AS 접속일수 
+FROM   ( 
+           SELECT  BSE_YM 
+                     ,CUS_NO 
+                     ,TRIM(BRD_NM)             BRD_NM 
+                     ,TRIM(CNL_NM)             CNL_NM 
+                     ,TRIM(SRN_IFO)             화면정보 
+                     ,MM_CNO_NBT              월접속횟수 
+                     ,MM_CNO_DD_CNT                   월접속일수 
+                     ,MM_FST_CNO_DT                     월최초접속일자 
+                     ,MM_LST_CNO_DT                     월최종접속일자 
+           FROM   EALSM_MM_MDI_CNO_IFO AS V1 
+           WHERE  V1.BSE_YM                   BETWEEN (SELECT SUBSTR(CONVERT(VARCHAR, DATEADD(MONTH, -2, VS_작업일), 112),1,6)) AND VS_월작업일     
+           AND        V1.SRN_IFO = '[0500] HOME : X32m0800'                                                                              
+           AND     V1.EVT_IFO1                 = '_' 
+           AND     V1.EVT_IFO2                 = '_' 
+           AND     V1.EVT_IFO3                 = '_' 
+           AND     V1.CNL_NM                  = 'MTS' 
+-- AND CUS_NO = '005903675' --'000000756' 
+) AS V1 
+GROUP BY CUS_NO 
+) AS V3 
+ON V1.고객번호 = V3.CUS_NO 
+-- MTS 활용현황 (접속 화면수) 
+LEFT OUTER JOIN ( 
+    SELECT CUS_NO 
+                    ,AVG(접속화면수) AS 접속화면수 
+    FROM   ( 
+                SELECT        BSE_YM 
+                            ,CUS_NO 
+                            ,COUNT(DISTINCT SRN_IFO) AS 접속화면수  
+                FROM EALSM_MM_MDI_CNO_IFO AS V1 
+                           WHERE  V1.BSE_YM                   BETWEEN (SELECT SUBSTR(CONVERT(VARCHAR, DATEADD(MONTH, -2, VS_작업일), 112),1,6)) AND VS_월작업일                                                                           
+                           AND     V1.EVT_IFO1                 = '_' 
+                           AND     V1.EVT_IFO2                 = '_' 
+                           AND     V1.EVT_IFO3                 = '_' 
+                           AND     V1.CNL_NM                  = 'MTS' 
+                GROUP BY BSE_YM, CUS_NO 
+    -- AND CUS_NO = '005903675' --'000000756' 
+    ) AS V1 
+    GROUP  BY CUS_NO 
+) AS V4 
+ON V1.고객번호 = V4.CUS_NO 
+; 
+
+SELECT DATEFORMAT(DATEADD(MONTH, -2, VS_작업일), 'YYYYMM') -- OPTION 1 
+SELECT SUBSTR(CONVERT(VARCHAR, DATEADD(MONTH, -2, VS_작업일), 112),1,6) -- OPTION 2 
+
+SELECT IQR_YR||IQR_TE_DIT_CD FROM EAERW_ACT_TE_PFT_RT 
+
+
+-- 보유종목 
+SELECT * FROM DBM.EMYDW_FIN_ACT_PDT_IFO AS V1;  
