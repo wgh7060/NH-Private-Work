@@ -1,0 +1,2162 @@
+CREATE VARIABLE VS_작업일 CHAR(8); 
+CREATE VARIABLE VS_월작업일 CHAR(6); 
+SET VS_작업일 = '20221130'; -- 월말기준  
+SET VS_월작업일 = '202211'; -- 월말기준  
+
+SELECT VS_작업일, VS_월작업일 FROM DUMMY; 
+
+-- 마이데이터 고객현황      
+SELECT  
+    VS_작업일                             AS 기준일자 
+    ,V1.CUS_NO                             AS 고객번호 
+    ,ISNULL(V1.RGS_CUC_MDI_CD, '00')         AS 마이데이터_가입매체 
+    ,V1.MD_SVC_STS_CD                    AS 마이데이터서비스상태코드 
+    --,V2.CUS_FNM                         AS 고객명 
+    ,ISNULL(V33.BSE_DT, '00000000')     AS 최근_업데이트일  
+    -- , AS PB상담_동의여부 --> TMYDC_IFO_PUS_SPN_PCL 마이데이터_정보활용동의내역 
+    -- , AS 마이데이터_마케팅_동의여부 -> DB에 없어 적재불가: --> TMYDC_IFO_PUS_SPN_PCL 마이데이터_정보활용동의내역 
+    ,ISNULL(V1.JIN_BSE_YM, '000000')     AS 진입년월 
+    ,ISNULL(V1.CCT_BSE_YM, '000000')     AS 만기일자 
+    -- ,ISNULL(V1.현재가입여부, 'N')     AS 가입여부  
+    ,금융자산 + 대출자산                 AS 총자산 
+    ,총자산 - 대출자산                     AS 순자산 
+    ,은행_현금저축 + 은행_투자 + 은행_퇴직연금 + 보험_저축 + 보험_개인연금 + 보험_퇴직연금 + 타사증권_현금저축 + 타사증권_투자 + 타사증권_개인연금 + 타사증권_퇴직연금 + 당사증권_현금저축 + 당사증권_투자 + 당사증권_개인연금 + 당사증권_퇴직연금  AS 금융자산 
+    ,자동차잔고합 + 부동산잔고합 + 가상화폐잔고합 AS 비금융자산 
+    ,은행_현금저축 + 보험_저축 + 타사증권_현금저축 + 당사증권_현금저축 + 전자금융잔고합 AS 현금성자산 
+    ,은행_퇴직연금 + 보험_개인연금 + 보험_퇴직연금 + 타사증권_개인연금 + 타사증권_퇴직연금 + 당사증권_개인연금 + 당사증권_퇴직연금  AS 연금자산 
+    ,은행_투자 +타사증권_투자 + 당사증권_투자                                         AS 투자자산 
+    ,은행_대출 + 보험_대출 + 타사증권_대출 + 당사증권_대출 + 카드잔고합                         AS 대출자산 
+    ,(CASE WHEN 은행등록여부 = 'Y' OR 보험등록여부 = 'Y' OR 타사증권등록여부 = 'Y' OR 당사증권등록여부 = 'Y' OR IRP등록여부 = 'Y' OR 카드등록여부 = 'Y' OR 전자금융등록여부 = 'Y' OR 차량등록여부 = 'Y' OR 부동산등록여부 = 'Y' OR 가상화폐등록여부  = 'Y' THEN 'Y' ELSE 'N' END) AS OCP_AET_RGS_YN -- 타사자산연결여부 
+    ,은행_등록기관수 + 보험_등록기관수 + 타사증권_등록기관수 +  + IRP등록기관수 + 카드_등록기관수 + 전자금융등록기관수 AS 총등록기관수 -- TOT_RGS_OGT_CNT --  
+    ,(CASE WHEN V1.현재가입여부 = 'Y' AND V8.원천은행가입여부 = 'Y' THEN 'Y' ELSE 'N' END)             AS 은행등록여부 -- BNK_RGS_YN --  
+    ,ISNULL(V8.은행_등록기관수,0)                                                                     AS 은행_등록기관수 -- BNK_RGS_OGT_CNT --  
+    ,ISNULL(V8.은행_등록계좌수,0)                                                                     AS 은행_등록계좌수 --  
+    ,(CASE WHEN V1.현재가입여부 = 'Y' AND V7.원천보험가입여부 = 'Y' THEN 'Y' ELSE 'N' END)             AS 보험등록여부 -- ISR_RGS_YN --  
+    ,ISNULL(V7.보험_등록기관수,0)                                                                     AS 보험_등록기관수 
+    ,(CASE WHEN V1.현재가입여부 = 'Y' AND V9.원천타사증권가입여부 = 'Y' THEN 'Y' ELSE 'N' END)         AS 타사증권등록여부 -- OCP_FIN_RGS_YN --  
+    ,ISNULL(V9.증권_등록기관수,0)                                                                     AS 타사증권_등록기관수 
+    ,(CASE WHEN V1.현재가입여부 = 'Y' AND V17.원천당사증권가입여부 = 'Y' THEN 'Y' ELSE 'N' END)     AS 당사증권등록여부 -- TCO_FIN_RGS_YN -- 
+    ,(CASE WHEN V1.현재가입여부 = 'Y' AND V16.원천IRP가입여부 = 'Y' THEN 'Y' ELSE 'N' END)             AS IRP등록여부 -- IRP_RGS_YN --  
+    ,ISNULL(V16.IRP_등록기관수,0)                                                                    AS IRP등록기관수  
+    ,(CASE WHEN V1.현재가입여부 = 'Y' AND V10.원천카드가입여부 = 'Y' THEN 'Y' ELSE 'N' END)         AS 카드등록여부 -- CRD_RGS_YN --  
+    ,ISNULL(V10.카드_등록기관수,0)                                                                     AS 카드_등록기관수 -- CRD_RGS_OGT_CNT --  
+    ,ISNULL(V10.카드_등록카드수,0)                                                                     AS 카드_등록카드수 -- CRD_RGS_OGT_CNT --  
+    ,(CASE WHEN V1.현재가입여부 = 'Y' AND V11.원천전자금융가입여부 = 'Y' THEN 'Y' ELSE 'N' END)     AS 전자금융등록여부 -- EFNC_RGS_YN --  
+    ,ISNULL(V11.전자금융등록기관수,0)                                                                 AS 전자금융등록기관수 -- EFNC_RGS_OGT_CNT --  
+    ,(CASE WHEN V1.현재가입여부 = 'Y' AND V13.원천차량가입여부 = 'Y' THEN 'Y' ELSE 'N' END)         AS 차량등록여부 -- VCL_RGS_YN --  
+    ,ISNULL(V13.자동차등록건수,0)                                                                     AS 자동차등록건수 -- VCL_RGS_CNT --  
+    ,(CASE WHEN V1.현재가입여부 = 'Y' AND V14.원천부동산가입여부 = 'Y' THEN 'Y' ELSE 'N' END)         AS 부동산등록여부 -- RET_RGS_YN --  
+    ,ISNULL(V14.부동산등록건수,0)                                                                     AS 부동산등록건수 -- RET_RGS_CNT --  
+    ,(CASE WHEN V1.현재가입여부 = 'Y' AND V15.원천가상화폐가입여부 = 'Y' THEN 'Y' ELSE 'N' END)     AS 가상화폐등록여부 -- VTL_CSH_RGS_YN --  
+    ,은행_현금저축_자유입출 + 은행_현금저축_예금 + 은행_현금저축_적금 +    은행_현금저축_기타            AS 은행_현금저축 
+    ,ISNULL(V8.은행_현금저축_계좌수,0)                     AS 은행_현금저축_계좌수 
+    ,ISNULL(V8.은행_현금저축_자유입출,0)            AS 은행_현금저축_자유입출 
+    ,ISNULL(V8.은행_현금저축_자유입출_계좌수,0)         AS 은행_현금저축_자유입출_계좌수 
+    ,ISNULL(V8.은행_현금저축_예금,0)                 AS 은행_현금저축_예금 
+    ,ISNULL(V8.은행_현금저축_예금_계좌수,0)                 AS 은행_현금저축_예금_계좌수 
+    ,ISNULL(V8.은행_현금저축_적금,0)                 AS 은행_현금저축_적금 
+    ,ISNULL(V8.은행_현금저축_적금_계좌수,0)                 AS 은행_현금저축_적금_계좌수 
+    ,ISNULL(V8.은행_현금저축_기타,0)                 AS 은행_현금저축_기타 
+    ,ISNULL(V8.은행_현금저축_기타_계좌수,0)                 AS 은행_현금저축_기타_계좌수 
+    ,은행_투자_수익증권 + 은행_투자_신탁 + 은행_투자_신탁ISA + 은행_투자_일임ISA + 은행_투자_기타    AS 은행_투자 
+    ,ISNULL(V8.은행_투자_계좌수,0)                         AS 은행_투자_계좌수 
+    ,ISNULL(V8.은행_투자_수익증권,0)                    AS 은행_투자_수익증권 
+    ,ISNULL(V8.은행_투자_수익증권_계좌수,0)             AS 은행_투자_수익증권_계좌수 
+    ,ISNULL(V8.은행_투자_신탁,0)                         AS 은행_투자_신탁 
+    ,ISNULL(V8.은행_투자_신탁_계좌수,0)                 AS 은행_투자_신탁_계좌수 
+    ,ISNULL(V8.은행_투자_신탁ISA,0)                     AS 은행_투자_신탁ISA 
+    ,ISNULL(V8.은행_투자_신탁ISA_계좌수,0)                 AS 은행_투자_신탁ISA_계좌수 
+    ,ISNULL(V8.은행_투자_일임ISA,0)                     AS 은행_투자_일임ISA 
+    ,ISNULL(V8.은행_투자_일임ISA_계좌수,0)                 AS 은행_투자_일임ISA_계좌수 
+    ,ISNULL(V8.은행_투자_기타,0)                         AS 은행_투자_기타 
+    ,ISNULL(V8.은행_투자_기타_계좌수,0)                 AS 은행_투자_기타_계좌수 
+    ,ISNULL(V16.IRP_은행,0)                        AS 은행_퇴직연금 
+    ,ISNULL(V16.IRP_은행_계좌수,0)                AS 은행_퇴직연금_계좌수 
+    ,은행_대출_신용 + 은행_투자_신탁 + 은행_투자_신탁ISA + 은행_투자_일임ISA + 은행_투자_기타                AS 은행_대출 
+    ,ISNULL(V8.은행_대출_계좌수,0)                 AS 은행_대출_계좌수 
+    ,ISNULL(V8.은행_대출_신용,0)                 AS 은행_대출_신용 
+    ,ISNULL(V8.은행_대출_신용_계좌수,0)         AS 은행_대출_신용_계좌수 
+    ,ISNULL(V8.은행_대출_전세자금,0)             AS 은행_대출_전세자금 
+    ,ISNULL(V8.은행_대출_전세자금_계좌수,0)     AS 은행_대출_전세자금_계좌수 
+    ,ISNULL(V8.은행_대출_예적금담보,0)             AS 은행_대출_예적금담보 
+    ,ISNULL(V8.은행_대출_예적금담보_계좌수,0)     AS 은행_대출_예적금담보_계좌수 
+    ,ISNULL(V8.은행_대출_주택담보,0)             AS 은행_대출_주택담보 
+    ,ISNULL(V8.은행_대출_주택담보_계좌수,0)     AS 은행_대출_주택담보_계좌수 
+    ,ISNULL(V8.은행_대출_주택연금,0)             AS 은행_대출_주택연금 
+    ,ISNULL(V8.은행_대출_주택연금_계좌수,0)     AS 은행_대출_주택연금_계좌수 
+    ,ISNULL(V8.은행_대출_기타,0)                 AS 은행_대출_기타 
+    ,ISNULL(V8.은행_대출_기타_계좌수,0)         AS 은행_대출_기타_계좌수 
+    ,ISNULL(V7.보험_현금저축,0)         AS 보험_저축 
+    ,ISNULL(V7.보험_연금,0)             AS 보험_개인연금 
+    ,ISNULL(V16.IRP_보험,0)             AS 보험_퇴직연금 
+    ,ISNULL(V7.보험_대출,0)             AS 보험_대출 
+    ,ISNULL(V7.보험_비금융,0)             AS 보험_비금융 
+    ,ISNULL(V9.증권_현금저축,0)         AS 타사증권_현금저축 
+    ,ISNULL(V9.증권_투자,0)             AS 타사증권_투자 
+    ,ISNULL(V9.증권_연금,0)             AS 타사증권_개인연금 
+    ,ISNULL(V16.IRP_타사증권,0)            AS 타사증권_퇴직연금 
+    ,ISNULL(V9.증권_대출,0)             AS 타사증권_대출 
+    ,ISNULL(V9.타사증권_국내주식_보유자산,0)         AS 타사증권_국내주식_보유자산 
+    ,ISNULL(V9.타사증권_국내주식_보유종목수,0)         AS 타사증권_국내주식_보유종목수 
+    ,ISNULL(V9.타사증권_해외주식_보유자산,0)         AS 타사증권_해외주식_보유자산 
+    ,ISNULL(V9.타사증권_해외주식_보유종목수,0)         AS 타사증권_해외주식_보유종목수 
+    ,ISNULL(V9.타사증권_국내채권_보유자산,0)         AS 타사증권_국내채권_보유자산 
+    ,ISNULL(V9.타사증권_국내채권_보유종목수,0)         AS 타사증권_국내채권_보유종목수 
+    ,ISNULL(V9.타사증권_해외채권_보유자산,0)         AS 타사증권_해외채권_보유자산 
+    ,ISNULL(V9.타사증권_해외채권_보유종목수,0)         AS 타사증권_해외채권_보유종목수 
+    ,ISNULL(V9.타사증권_대출채권_보유자산,0)         AS 타사증권_대출채권_보유자산 
+    ,ISNULL(V9.타사증권_대출채권_보유종목수,0)         AS 타사증권_대출채권_보유종목수 
+    ,ISNULL(V9.타사증권_국내파생결합증권_보유자산,0)         AS 타사증권_국내파생결합증권_보유자산 
+    ,ISNULL(V9.타사증권_국내파생결합증권_보유종목수,0)         AS 타사증권_국내파생결합증권_보유종목수 
+    ,ISNULL(V9.타사증권_해외파생결합증권_보유자산,0)         AS 타사증권_해외파생결합증권_보유자산 
+    ,ISNULL(V9.타사증권_해외파생결합증권_보유종목수,0)         AS 타사증권_해외파생결합증권_보유종목수 
+    ,ISNULL(V9.타사증권_국내장내파생상품_보유자산,0)         AS 타사증권_국내장내파생상품_보유자산 
+    ,ISNULL(V9.타사증권_국내장내파생상품_보유종목수,0)         AS 타사증권_국내장내파생상품_보유종목수 
+    ,ISNULL(V9.타사증권_해외장내파생상품_보유자산,0)         AS 타사증권_해외장내파생상품_보유자산 
+    ,ISNULL(V9.타사증권_해외장내파생상품_보유종목수,0)         AS 타사증권_해외장내파생상품_보유종목수 
+    ,ISNULL(V9.타사증권_기타파생상품_보유자산,0)             AS 타사증권_기타파생상품_보유자산 
+    ,ISNULL(V9.타사증권_기타파생상품_보유종목수,0)             AS 타사증권_기타파생상품_보유종목수 
+    ,ISNULL(V9.타사증권_국내단기금융상품_보유자산,0)         AS 타사증권_국내단기금융상품_보유자산 
+    ,ISNULL(V9.타사증권_국내단기금융상품_보유종목수,0)         AS 타사증권_국내단기금융상품_보유종목수 
+    ,ISNULL(V9.타사증권_해외단기금융상품_보유자산,0)         AS 타사증권_해외단기금융상품_보유자산 
+    ,ISNULL(V9.타사증권_해외단기금융상품_보유종목수,0)         AS 타사증권_해외단기금융상품_보유종목수 
+    ,ISNULL(V9.타사증권_국내펀드_보유자산,0)                 AS 타사증권_국내펀드_보유자산 
+    ,ISNULL(V9.타사증권_국내펀드_보유종목수,0)                 AS 타사증권_국내펀드_보유종목수 
+    ,ISNULL(V9.타사증권_해외역내펀드_보유자산,0)             AS 타사증권_해외역내펀드_보유자산 
+    ,ISNULL(V9.타사증권_해외역내펀드_보유종목수,0)             AS 타사증권_해외역내펀드_보유종목수 
+    ,ISNULL(V9.타사증권_해외역외펀드_보유자산,0)         AS 타사증권_해외역외펀드_보유자산 
+    ,ISNULL(V9.타사증권_해외역외펀드_보유종목수,0)         AS 타사증권_해외역외펀드_보유종목수 
+    ,ISNULL(V9.타사증권_랩_보유자산,0)                     AS 타사증권_랩_보유자산 
+    ,ISNULL(V9.타사증권_랩_보유종목수,0)                 AS 타사증권_랩_보유종목수 
+    ,ISNULL(V9.타사증권_신탁_보유자산,0)                 AS 타사증권_신탁_보유자산 
+    ,ISNULL(V9.타사증권_신탁_보유종목수,0)                 AS 타사증권_신탁_보유종목수 
+    ,ISNULL(V9.타사증권_현금과예금_보유자산,0)             AS 타사증권_현금과예금_보유자산 
+    ,ISNULL(V9.타사증권_현금과예금_보유종목수,0)         AS 타사증권_현금과예금_보유종목수 
+    ,ISNULL(V9.타사증권_퇴직연금_보유자산,0)             AS 타사증권_퇴직연금_보유자산 
+    ,ISNULL(V9.타사증권_퇴직연금_보유종목수,0)             AS 타사증권_퇴직연금_보유종목수 
+    ,ISNULL(V9.타사증권_현물_보유자산,0)         AS 타사증권_현물_보유자산 
+    ,ISNULL(V9.타사증권_현물_보유종목수,0)         AS 타사증권_현물_보유종목수 
+    ,ISNULL(V9.타사증권_기타_보유자산,0)         AS 타사증권_기타_보유자산 
+    ,ISNULL(V9.타사증권_기타_보유종목수,0)         AS 타사증권_기타_보유종목수 
+    ,ISNULL(V9.타사증권_상품별_현금성자산,0)         AS 타사증권_상품별_현금성자산 
+    ,ISNULL(V17.증권_현금저축,0)         AS 당사증권_현금저축 
+    ,ISNULL(V17.증권_투자,0)             AS 당사증권_투자 
+    ,ISNULL(V17.증권_연금,0)             AS 당사증권_개인연금 
+    ,ISNULL(V16.IRP_당사증권,0)            AS 당사증권_퇴직연금 
+    ,ISNULL(V17.증권_대출,0)             AS 당사증권_대출 
+    ,ISNULL(V17.당사증권_국내주식_보유자산,0)         AS 당사증권_국내주식_보유자산 
+    ,ISNULL(V17.당사증권_국내주식_보유종목수,0)         AS 당사증권_국내주식_보유종목수 
+    ,ISNULL(V17.당사증권_해외주식_보유자산,0)         AS 당사증권_해외주식_보유자산 
+    ,ISNULL(V17.당사증권_해외주식_보유종목수,0)         AS 당사증권_해외주식_보유종목수 
+    ,ISNULL(V17.당사증권_국내채권_보유자산,0)         AS 당사증권_국내채권_보유자산 
+    ,ISNULL(V17.당사증권_국내채권_보유종목수,0)         AS 당사증권_국내채권_보유종목수 
+    ,ISNULL(V17.당사증권_해외채권_보유자산,0)         AS 당사증권_해외채권_보유자산 
+    ,ISNULL(V17.당사증권_해외채권_보유종목수,0)         AS 당사증권_해외채권_보유종목수 
+    ,ISNULL(V17.당사증권_대출채권_보유자산,0)         AS 당사증권_대출채권_보유자산 
+    ,ISNULL(V17.당사증권_대출채권_보유종목수,0)         AS 당사증권_대출채권_보유종목수 
+    ,ISNULL(V17.당사증권_국내파생결합증권_보유자산,0)         AS 당사증권_국내파생결합증권_보유자산 
+    ,ISNULL(V17.당사증권_국내파생결합증권_보유종목수,0)         AS 당사증권_국내파생결합증권_보유종목수 
+    ,ISNULL(V17.당사증권_해외파생결합증권_보유자산,0)         AS 당사증권_해외파생결합증권_보유자산 
+    ,ISNULL(V17.당사증권_해외파생결합증권_보유종목수,0)         AS 당사증권_해외파생결합증권_보유종목수 
+    ,ISNULL(V17.당사증권_국내장내파생상품_보유자산,0)         AS 당사증권_국내장내파생상품_보유자산 
+    ,ISNULL(V17.당사증권_국내장내파생상품_보유종목수,0)         AS 당사증권_국내장내파생상품_보유종목수 
+    ,ISNULL(V17.당사증권_해외장내파생상품_보유자산,0)         AS 당사증권_해외장내파생상품_보유자산 
+    ,ISNULL(V17.당사증권_해외장내파생상품_보유종목수,0)         AS 당사증권_해외장내파생상품_보유종목수 
+    ,ISNULL(V17.당사증권_기타파생상품_보유자산,0)             AS 당사증권_기타파생상품_보유자산 
+    ,ISNULL(V17.당사증권_기타파생상품_보유종목수,0)             AS 당사증권_기타파생상품_보유종목수 
+    ,ISNULL(V17.당사증권_국내단기금융상품_보유자산,0)         AS 당사증권_국내단기금융상품_보유자산 
+    ,ISNULL(V17.당사증권_국내단기금융상품_보유종목수,0)         AS 당사증권_국내단기금융상품_보유종목수 
+    ,ISNULL(V17.당사증권_해외단기금융상품_보유자산,0)         AS 당사증권_해외단기금융상품_보유자산 
+    ,ISNULL(V17.당사증권_해외단기금융상품_보유종목수,0)         AS 당사증권_해외단기금융상품_보유종목수 
+    ,ISNULL(V17.당사증권_국내펀드_보유자산,0)                 AS 당사증권_국내펀드_보유자산 
+    ,ISNULL(V17.당사증권_국내펀드_보유종목수,0)                 AS 당사증권_국내펀드_보유종목수 
+    ,ISNULL(V17.당사증권_해외역내펀드_보유자산,0)             AS 당사증권_해외역내펀드_보유자산 
+    ,ISNULL(V17.당사증권_해외역내펀드_보유종목수,0)             AS 당사증권_해외역내펀드_보유종목수 
+    ,ISNULL(V17.당사증권_해외역외펀드_보유자산,0)         AS 당사증권_해외역외펀드_보유자산 
+    ,ISNULL(V17.당사증권_해외역외펀드_보유종목수,0)         AS 당사증권_해외역외펀드_보유종목수 
+    ,ISNULL(V17.당사증권_랩_보유자산,0)                     AS 당사증권_랩_보유자산 
+    ,ISNULL(V17.당사증권_랩_보유종목수,0)                 AS 당사증권_랩_보유종목수 
+    ,ISNULL(V17.당사증권_신탁_보유자산,0)                 AS 당사증권_신탁_보유자산 
+    ,ISNULL(V17.당사증권_신탁_보유종목수,0)                 AS 당사증권_신탁_보유종목수 
+    ,ISNULL(V17.당사증권_현금과예금_보유자산,0)             AS 당사증권_현금과예금_보유자산 
+    ,ISNULL(V17.당사증권_현금과예금_보유종목수,0)         AS 당사증권_현금과예금_보유종목수 
+    ,ISNULL(V17.당사증권_퇴직연금_보유자산,0)             AS 당사증권_퇴직연금_보유자산 
+    ,ISNULL(V17.당사증권_퇴직연금_보유종목수,0)             AS 당사증권_퇴직연금_보유종목수 
+    ,ISNULL(V17.당사증권_현물_보유자산,0)         AS 당사증권_현물_보유자산 
+    ,ISNULL(V17.당사증권_현물_보유종목수,0)         AS 당사증권_현물_보유종목수 
+    ,ISNULL(V17.당사증권_기타_보유자산,0)         AS 당사증권_기타_보유자산 
+    ,ISNULL(V17.당사증권_기타_보유종목수,0)         AS 당사증권_기타_보유종목수 
+    ,ISNULL(V17.당사증권_상품별_현금성자산,0)         AS 당사증권_상품별_현금성자산 
+    ,ISNULL(V10.카드잔고합,0)             AS 카드잔고합 -- CRD_RSL_AMT --  
+    ,ISNULL(V11.전자금융잔고합,0)         AS 전자금융잔고합 -- EFNC_AET_AMT --  
+    ,ISNULL(V13.자동차잔고합,0)         AS 자동차잔고합 -- VCL_AET_AMT --  
+    ,ISNULL(V14.부동산잔고합,0)         AS 부동산잔고합 -- RET_AET_AMT --  
+    ,ISNULL(V15.가상화폐잔고합,0)         AS  가상화폐잔고합 -- VCTL_CSH_AET_AMT -- 
+/* 
+    ,ISNULL(ADD4.화면1_접속횟수, 0) AS 화면1_접속횟수 
+    ,ISNULL(ADD4.화면1_접속일수, 0) AS 화면1_접속일수 
+    ,ISNULL(ADD4.화면1_유입화면, '화면미접속') AS 화면1_유입화면 
+    ,ISNULL(ADD4.화면1_유출화면, '화면미접속') AS 화면1_유출화면 
+    ,ISNULL(ADD4.화면2_접속횟수, 0) AS 화면2_접속횟수 
+    ,ISNULL(ADD4.화면2_접속일수, 0) AS 화면2_접속일수 
+    ,ISNULL(ADD4.화면2_유입화면, '화면미접속') AS 화면2_유입화면 
+    ,ISNULL(ADD4.화면2_유출화면, '화면미접속') AS 화면2_유출화면 
+    ,ISNULL(ADD4.화면3_접속횟수, 0) AS 화면3_접속횟수 
+    ,ISNULL(ADD4.화면3_접속일수, 0) AS 화면3_접속일수 
+    ,ISNULL(ADD4.화면3_유입화면, '화면미접속') AS 화면3_유입화면 
+    ,ISNULL(ADD4.화면3_유출화면, '화면미접속') AS 화면3_유출화면 
+    ,ISNULL(ADD4.화면4_접속횟수, 0) AS 화면4_접속횟수 
+    ,ISNULL(ADD4.화면4_접속일수, 0) AS 화면4_접속일수 
+    ,ISNULL(ADD4.화면4_유입화면, '화면미접속') AS 화면4_유입화면 
+    ,ISNULL(ADD4.화면4_유출화면, '화면미접속') AS 화면4_유출화면 
+    ,ISNULL(ADD4.화면5_접속횟수, 0) AS 화면5_접속횟수 
+    ,ISNULL(ADD4.화면5_접속일수, 0) AS 화면5_접속일수 
+    ,ISNULL(ADD4.화면5_유입화면, '화면미접속') AS 화면5_유입화면 
+    ,ISNULL(ADD4.화면5_유출화면, '화면미접속') AS 화면5_유출화면 
+    ,ISNULL(ADD4.화면6_접속횟수, 0) AS 화면6_접속횟수 
+    ,ISNULL(ADD4.화면6_접속일수, 0) AS 화면6_접속일수 
+    ,ISNULL(ADD4.화면6_유입화면, '화면미접속') AS 화면6_유입화면 
+    ,ISNULL(ADD4.화면6_유출화면, '화면미접속') AS 화면6_유출화면 
+    ,ISNULL(ADD4.화면7_접속횟수, 0) AS 화면7_접속횟수 
+    ,ISNULL(ADD4.화면7_접속일수, 0) AS 화면7_접속일수 
+    ,ISNULL(ADD4.화면7_유입화면, '화면미접속') AS 화면7_유입화면 
+    ,ISNULL(ADD4.화면7_유출화면, '화면미접속') AS 화면7_유출화면 
+*/ 
+INTO #MYDATA_01 
+FROM ( 
+    SELECT DISTINCT A.CUS_NO 
+        ,LEFT(MAX(A.JIN_DT),6) AS JIN_BSE_YM  -- 진입일자 기준년월 
+        ,LEFT(MAX(A.CCT_DT),6) AS CCT_BSE_YM  -- 해지일자 기준년월 
+        ,CASE WHEN CCT_BSE_YM = '000000' THEN 'Y' ELSE 'N' END AS 현재가입여부 
+        ,CASE WHEN RGS_CUC_MDI_CD IN ('BC', 'B8') THEN '01' -- 나무 
+            ELSE '02' END AS RGS_CUC_MDI_CD -- QV 
+        ,MD_SVC_STS_CD 
+        FROM DBM.EMYDW_SVC_LGR_IFO AS  A                             -- 마이데이터 서비스 원장 정보 테이블             
+        WHERE 1=1  
+        AND JIN_DT <= VS_작업일 
+        AND MD_CL_ID     = '0K5PTfBnrZfCP9YFjqs1CdlyzA7TNCfR'  -- 클라이언트ID 
+        AND     DAT_COL_DIT_CD     = '01'                        -- 데이터수집구분코드1 = 마이데이터  
+        --AND     CCT_DT         = '00000000'                   -- 해지일자  
+        GROUP BY CUS_NO, RGS_CUC_MDI_CD, MD_SVC_STS_CD  
+        HAVING JIN_BSE_YM <> '000000'    -- 진입일자 명확한 고객만 추출  
+    ) AS V1 
+            /* 
+    LEFT OUTER JOIN EDIMM_CUS 
+    AS V2  
+    ON V1.CUS_NO = V2.CUS_NO 
+
+    LEFT OUTER JOIN ( 
+        SELECT DISTINCT V3.CUS_NO 
+            ,V3.MRZ_ACT_NO 
+            1. ,CASE WHEN V3.MRZ_ACT_AMN_TAB_CD IN ('0202','0300','0400') THEN '01' -- 나무 
+                  WHEN V3.MRZ_ACT_AMN_TAB_CD = '0100' OR SUBSTR(V3.MRZ_ACT_AMN_EMP_NO,1,1) IN ('B','D') THEN '02' -- QV비관리 
+                  WHEN SUBSTR(V3.MRZ_ACT_AMN_EMP_NO,1,1) NOT IN ('B','D') THEN '03'  -- QV관리 
+
+            2. ,CASE WHEN V3.MRZ_ACT_AMN_TAB_CD IN ('0202','0300','0400') THEN '01' -- '[0] 나무' 
+            WHEN V3.MRZ_ACT_AMN_TAB_CD NOT IN ('0202','0300','0400') AND LEFT(MRZ_ACT_AMN_EMP_NO,1) BETWEEN '0' AND '9' THEN '02' -- '[1] QV 관리' 
+            WHEN V3.MRZ_ACT_AMN_TAB_CD NOT IN ('0202','0300','0400') THEN '03' --'[2] QV 비관리' 
+               ,CASE WHEN V3.MRZ_ACT_AMN_TAB_CD NOT IN ('0202','0300','0400') THEN '02' -- '[1] QV' 
+                  -- WHEN V3.MRZ_ACT_AMN_TAB_CD IN ('0202','0300','0400') THEN '01'  
+        ELSE '01' END AS 채널구분 -- '[0] 나무' 
+        FROM EDIMM_CUS AS V3  
+        WHERE 1=1  
+        AND V3.MRZ_ACT_AMN_TAB_CD <= '0900' -- 0900 아래 실적관리 팀점  
+        AND    V3.MRZ_ACT_AMN_TAB_CD NOT IN ('0196','0197') -- 일임형랩/결제업무부 제외 
+    ) AS V5 
+    ON V1.CUS_NO = V5.CUS_NO 
+            */ 
+    LEFT OUTER JOIN ( -- 자산 최신 업데이트일 찾기     
+        SELECT DISTINCT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+        FROM     (SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_ISR_CLG AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_ISR_PYMT_IFO AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(TRD_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_ISR_TRD_PCL AS V1 
+                        WHERE V1.TRD_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_ISR_LON_PDT_CLG AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_ISR_LON_PDT_APD_IFO AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_BNK_ACT_CLG AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_BNK_DPACT_BAS_IFO AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_BNK_DPACT_APD_IFO AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_BNK_IPACT_BAS_IFO AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_BNK_IPACT_APD_IFO AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_BNK_LPACT_BAS_IFO AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_BNK_LPACT_APD_IFO AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_FIN_ACT_CLG AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_FIN_ACT_BAS_IFO AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_FIN_ACT_PDT_IFO AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_CRD_STL_IFO AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_CRD_SHM_LON_IFO  AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_CRD_LTM_LON_IFO AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_EFNC_PEPM_CLG AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_EFNC_PEPM_RND_IFO AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_COM_IRP_ACT_CLG AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_COM_IRP_ACT_BAS_IFO AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+                 UNION ALL 
+                 SELECT CUS_NO, MAX(BSE_DT) AS BSE_DT 
+                   FROM DBM.EMYDW_COM_IRP_ACT_APD_IFO AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                        GROUP BY CUS_NO 
+        ) AS A1 
+        GROUP BY CUS_NO 
+    ) AS V33 
+    ON V1.CUS_NO = V33.CUS_NO  
+    LEFT OUTER JOIN ( --보험자산과 보험대출을 합하는 과정 
+        SELECT DISTINCT IS11.CUS_NO 
+            ,IS11.원천보험가입여부 
+            ,ISNULL(IS11.보험_등록기관수,0) AS 보험_등록기관수 
+            ,IS11.보험_연금 
+            ,IS11.보험_현금저축 
+            ,IS11.보험_비금융 
+            ,ISNULL(IS12.보험_대출,0) AS 보험_대출 
+        FROM ( 
+            SELECT IS01.CUS_NO 
+                ,'Y' AS 원천보험가입여부  
+                ,COUNT(DISTINCT IS01.MD_OGT_CD) AS 보험_등록기관수 
+                --,COUNT(CASE WHEN IS01.ISR_KND_DIT_CD IN ('09','10') THEN 1 ELSE NULL END) AS 보험_연금등록건수 
+                --,COUNT(CASE WHEN IS01.ISR_KND_DIT_CD IN ('11') THEN 1 ELSE NULL END) AS 보험_현금저축등록건수 
+                --,COUNT(CASE WHEN IS01.ISR_KND_DIT_CD NOT IN ('09','10','11') THEN 1 ELSE NULL END) AS 보험_비금융등록건수 
+                ,SUM(CASE WHEN IS01.ISR_KND_DIT_CD IN ('09','10') THEN ISNULL(IS05.PYMT_AMT,0) ELSE 0 END) AS 보험_연금 -- 9:연금저축보험 / 10:연금보험 
+                ,SUM(CASE WHEN IS01.ISR_KND_DIT_CD IN ('11') THEN ISNULL(IS05.PYMT_AMT,0) ELSE 0 END) AS 보험_현금저축  -- 11:저축보험(양로보험) 
+                ,SUM(CASE WHEN IS01.ISR_KND_DIT_CD NOT IN ('09','10','11') THEN ISNULL(IS05.PYMT_AMT,0) ELSE 0 END) AS 보험_비금융 -- 연금과 저축성보험을 제외한 모든 보험  
+            FROM ( 
+                    SELECT A.CUS_NO 
+                        ,A.MD_OGT_CD        -- 마이데이터기관코드 
+                        ,A.MD_SEC_AMN_NO    -- 마이데이터증권관리번호  
+                        ,A.ISR_KND_DIT_CD    -- 보험종류구분코드 
+                        ,A.MD_PDT_NM        -- 마이데이터상품명 
+                        ,A.MD_ISR_AGM_STS_CD    -- 마이데이터보험계약상태코드  
+                    FROM DBM.EMYDW_ISR_CLG AS A --보험01:마이데이터_보험목록 
+                    INNER JOIN ( 
+                        SELECT    CUS_NO  
+                            ,MD_OGT_CD 
+                            ,MAX(BSE_DT) AS BSE_DT 
+                        FROM DBM.EMYDW_ISR_CLG AS V1 
+                            WHERE V1.BSE_DT <= VS_작업일 -- 작업일을 최신기준으로 빼기위함 
+                            GROUP BY CUS_NO 
+                                ,MD_OGT_CD ) AS B 
+                    ON    A.BSE_DT        = B.BSE_DT 
+                    AND    A.CUS_NO         = B.CUS_NO 
+                    AND    A.MD_OGT_CD        = B.MD_OGT_CD 
+                 ) IS01 
+                LEFT OUTER JOIN ( 
+                SELECT    CUS_NO 
+                        ,MD_OGT_CD 
+                        ,MD_SEC_AMN_NO 
+                        ,A.ISR_PYMT_AMT as 보험납입금액 
+                        ,A.MD_PYMT_TOR as 보험납입회차 
+                        ,B.SBY_BSE_XCG_RT as 매매기준환율 
+                        ,ISNULL(A.ISR_PYMT_AMT,0) * ISNULL(A.MD_PYMT_TOR,0) * ISNULL(B.SBY_BSE_XCG_RT,1) AS PYMT_AMT  -- 보험납입금액 * 보험납입회차 * 매매기준환율 = 마이데이터총납입금액 
+                        ,A.MD_ISR_PYMT_FCY_CD                --보험납입주기코드 
+                        ,A.MD_PYMT_TOR AS MD_TOT_PYMT_NBT    --납입회차 
+                        ,A.ISR_FEE_PYMT_OGT_CD                --보험료납입기관코드 
+                        ,A.ISR_PYMT_DD                        --보험납입일 
+                        ,A.ISR_PYMT_END_DT                    --보험납입종료일자 
+                        ,A.CUR_CD                            --통화코드     
+                        ,A.MD_ATO_LON_PYMT_REQ_YN            --마이데이터자동대출납입신청여부         
+                FROM (   
+                        SELECT T1.CUS_NO 
+                            ,T1.MD_OGT_CD 
+                            ,T1.MD_SEC_AMN_NO   
+                            ,T1.ISR_PYMT_AMT         --보험납입금액   
+                            ,T1.CUR_CD               --통화코드    
+                            ,T2.MD_PYMT_TOR          --납입회차    
+                            ,T1.MD_ISR_PYMT_FCY_CD    --납입주기코드 
+                            ,T1.MD_TOT_PYMT_NBT        --마이데이터총납입횟수 
+                            ,T1.ISR_FEE_PYMT_OGT_CD    --보험료납입기관코드 
+                            ,T1.ISR_PYMT_DD            --보험납입일 
+                            ,T1.ISR_PYMT_END_DT        --보험납입종료일자 
+                            ,T1.MD_ATO_LON_PYMT_REQ_YN    --마이데이터자동대출납입신청여부                     
+                        FROM (   
+                            SELECT    A.CUS_NO 
+                                ,A.MD_OGT_CD 
+                                ,A.MD_SEC_AMN_NO 
+                                ,A.ISR_PYMT_AMT            --보험납입금액 
+                                ,A.CUR_CD                 --통화코드 
+                                ,A.MD_ISR_PYMT_FCY_CD    --납입주기코드 
+                                ,A.MD_TOT_PYMT_NBT        --마이데이터총납입횟수 
+                                ,A.ISR_FEE_PYMT_OGT_CD    --보험료납입기관코드 
+                                ,A.ISR_PYMT_DD            --보험납입일 
+                                ,A.ISR_PYMT_END_DT        --보험납입종료일자 
+                                ,A.MD_ATO_LON_PYMT_REQ_YN    --마이데이터자동대출납입신청여부                     
+                            FROM DBM.EMYDW_ISR_PYMT_IFO A --보험005마이데이터_보험납입정보 
+                            INNER JOIN ( 
+                                SELECT CUS_NO  
+                                    ,MD_OGT_CD 
+                                    ,MAX(BSE_DT) AS BSE_DT 
+                                FROM DBM.EMYDW_ISR_PYMT_IFO AS V1 --보험005마이데이터_보험납입정보 
+                                WHERE V1.BSE_DT <= VS_작업일 
+                                GROUP BY CUS_NO, MD_OGT_CD 
+                            ) AS B 
+                            ON    A.BSE_DT = B.BSE_DT 
+                            AND    A.CUS_NO = B.CUS_NO 
+                            AND    A.MD_OGT_CD    = B.MD_OGT_CD 
+                            ) T1   
+                    INNER JOIN (   
+                        SELECT    A.CUS_NO 
+                            ,A.MD_OGT_CD 
+                            ,A.MD_SEC_AMN_NO   
+                            ,MAX(A.MD_PYMT_TOR) AS MD_PYMT_TOR  --마이데이터최대납입회차 
+                        FROM DBM.EMYDW_ISR_TRD_PCL AS A             --보험006마이데이터_보험거래내역   
+                        INNER JOIN( 
+                            SELECT    CUS_NO  
+                                ,MD_OGT_CD 
+                                ,MD_SEC_AMN_NO 
+                                ,MAX(TRD_DT) AS TRD_DT 
+                            FROM DBM.EMYDW_ISR_TRD_PCL V1 
+                            WHERE V1.TRD_DT <= VS_작업일 
+                            GROUP BY CUS_NO 
+                                ,MD_OGT_CD 
+                                ,MD_SEC_AMN_NO 
+                        ) AS B 
+                        ON    A.TRD_DT        = B.TRD_DT 
+                        AND    A.CUS_NO         = B.CUS_NO 
+                        AND    A.MD_OGT_CD        = B.MD_OGT_CD 
+                        AND    A.MD_SEC_AMN_NO        = B.MD_SEC_AMN_NO 
+                        GROUP BY A.CUS_NO, A.MD_OGT_CD, A.MD_SEC_AMN_NO   
+                    ) T2   
+                    ON T1.CUS_NO        = T2.CUS_NO   
+                    AND T1.MD_OGT_CD    = T2.MD_OGT_CD   
+                    AND T1.MD_SEC_AMN_NO    = T2.MD_SEC_AMN_NO   
+                ) A 
+                LEFT OUTER JOIN     ( 
+                        SELECT    BNK_PBA_XCG_RT_DT -- 은행공시환율일자  
+                            ,CUR_CD                  -- 통화코드 
+                            ,SBY_BSE_XCG_RT          -- 매매기준환율 
+                        FROM ( 
+                            SELECT  /*+ index(x ECBSW_BNK_PBA_XCG_RT_IX02) */ 
+                                 BNK_PBA_XCG_RT_DT -- 은행공시환율일자 
+                                ,CUR_CD               -- 통화코드 
+                                ,SBY_BSE_XCG_RT       -- 매매기준환율 
+                                ,ROW_NUMBER() OVER(PARTITION BY CUR_CD ORDER BY BNK_PBA_XCG_RT_DT DESC) RN 
+                            FROM    DBM.ECBSW_BNK_PBA_XCG_RT AS x -- 은행공시환율 
+                            WHERE   BNK_PBA_XCG_RT_DT <= VS_작업일 
+                        ) AS V1 
+                        WHERE RN = 1 -- 각 통화별 최신 환율일자만 가져오는 쿼리 
+                ) B   
+                ON A.CUR_CD = B.CUR_CD -- 환율코드 
+            -- WHERE CUS_NO = '105089459' 
+            ) IS05                 
+            ON    IS01.CUS_NO         = IS05.CUS_NO 
+            AND    IS01.MD_OGT_CD         = IS05.MD_OGT_CD 
+            AND    IS01.MD_SEC_AMN_NO     = IS05.MD_SEC_AMN_NO 
+            GROUP BY IS01.CUS_NO 
+        ) AS IS11 
+        LEFT OUTER JOIN ( 
+                SELECT IS08.CUS_NO 
+                    ,SUM(IS10.MD_LON_RND) AS 보험_대출 
+                FROM ( 
+                        SELECT    A.CUS_NO 
+                            ,A.MD_OGT_CD 
+                            ,A.MD_ACT_NO 
+                            ,A.MD_ACT_DIT_CD 
+                            ,A.MD_PDT_NM 
+                            ,A.MD_ACT_STS_CD  
+                        FROM DBM.EMYDW_ISR_LON_PDT_CLG A --보험08:마이데이터_보험대출상품목록 
+                        INNER JOIN ( 
+                            SELECT    CUS_NO  
+                                ,MD_OGT_CD 
+                                ,MAX(BSE_DT) AS BSE_DT 
+                            FROM DBM.EMYDW_ISR_LON_PDT_CLG V1 
+                            WHERE V1.BSE_DT <= VS_작업일 
+                            GROUP    BY CUS_NO  
+                                ,MD_OGT_CD 
+                        ) AS B 
+                        ON    A.BSE_DT        = B.BSE_DT 
+                        AND    A.CUS_NO         = B.CUS_NO 
+                        AND    A.MD_OGT_CD        = B.MD_OGT_CD 
+                ) IS08 
+                LEFT OUTER JOIN ( 
+                    SELECT    A.CUS_NO 
+                        ,A.MD_OGT_CD 
+                        ,A.MD_ACT_NO  
+                        ,ISNULL(A.MD_LON_RND,0) * ISNULL(B.SBY_BSE_XCG_RT,1) AS MD_LON_RND --마이데이터대출잔액(자산항목) 
+                    FROM DBM.EMYDW_ISR_LON_PDT_APD_IFO AS A --보험10:마이데이터_보험대출상품추가정보 
+                    LEFT OUTER JOIN ( 
+                        SELECT    BNK_PBA_XCG_RT_DT 
+                            ,CUR_CD 
+                            ,SBY_BSE_XCG_RT 
+                        FROM ( 
+                            SELECT  /*+ index(x ECBSW_BNK_PBA_XCG_RT_IX02) */ 
+                                 BNK_PBA_XCG_RT_DT 
+                                ,CUR_CD 
+                                ,SBY_BSE_XCG_RT 
+                                ,ROW_NUMBER() OVER(PARTITION BY CUR_CD ORDER BY BNK_PBA_XCG_RT_DT DESC ) AS RN 
+                            FROM    DBM.ECBSW_BNK_PBA_XCG_RT 
+                            WHERE   BNK_PBA_XCG_RT_DT <= VS_작업일 
+                        ) AS V1 
+                        WHERE    RN = 1 
+                    ) AS B 
+                    ON A.CUR_CD = B.CUR_CD 
+                    INNER JOIN ( 
+                        SELECT    CUS_NO  
+                            ,MD_OGT_CD 
+                            ,MAX(BSE_DT) AS BSE_DT 
+                        FROM DBM.EMYDW_ISR_LON_PDT_APD_IFO V1 
+                        WHERE V1.BSE_DT <= VS_작업일 
+                        GROUP    BY CUS_NO  
+                            ,MD_OGT_CD 
+                    ) AS C 
+                    ON    A.BSE_DT        = C.BSE_DT 
+                    AND    A.CUS_NO         = C.CUS_NO 
+                    AND    A.MD_OGT_CD        = C.MD_OGT_CD 
+                ) IS10 
+                ON IS08.CUS_NO         = IS10.CUS_NO  
+                AND IS08.MD_OGT_CD     = IS10.MD_OGT_CD  
+                AND IS08.MD_ACT_NO     = IS10.MD_ACT_NO 
+                GROUP BY IS08.CUS_NO 
+        ) AS IS12 
+        ON IS11.CUS_NO = IS12.CUS_NO 
+    ) AS V7  
+    ON V1.CUS_NO = V7.CUS_NO 
+    LEFT OUTER JOIN ( 
+        SELECT DISTINCT BA15.CUS_NO 
+                ,'Y' AS 원천은행가입여부 
+                ,은행_현금저축 + 은행_투자 + 은행_대출 AS 은행_통합잔고 
+                ,COUNT(DISTINCT MD_OGT_CD) AS 은행_등록기관수 
+                ,은행_현금저축_계좌수 + 은행_투자_계좌수 + 은행_대출_계좌수 AS 은행_등록계좌수 -- COUNT(DISTINCT MD_ACT_NO)  
+                ,은행_현금저축_자유입출 + 은행_현금저축_예금 + 은행_현금저축_적금 + 은행_현금저축_기타 AS 은행_현금저축 -- SUM(CASE WHEN MD_AET_DIT_CD IN ('01') THEN MD_AET_AMT ELSE 0 END)  
+                ,은행_현금저축_자유입출_계좌수 + 은행_현금저축_예금_계좌수 + 은행_현금저축_적금_계좌수 + 은행_현금저축_기타_계좌수 AS 은행_현금저축_계좌수 -- SUM(CASE WHEN MD_AET_DIT_CD IN ('01') THEN 1 ELSE 0 END)  
+                ,은행_투자_수익증권 + 은행_투자_신탁 + 은행_투자_신탁ISA + 은행_투자_일임ISA + 은행_투자_기타 AS 은행_투자 -- SUM(CASE WHEN MD_AET_DIT_CD IN ('02') THEN MD_AET_AMT ELSE 0 END)  
+                ,은행_투자_수익증권_계좌수 + 은행_투자_신탁_계좌수 + 은행_투자_신탁ISA_계좌수 + 은행_투자_일임ISA_계좌수 + 은행_투자_기타_계좌수 AS 은행_투자_계좌수 -- SUM(CASE WHEN MD_AET_DIT_CD IN ('02') THEN 1 ELSE 0 END)  
+                ,은행_대출_신용 + 은행_대출_전세자금 + 은행_대출_예적금담보 + 은행_대출_주택담보 + 은행_대출_주택연금 + 은행_대출_기타 AS 은행_대출 -- SUM(CASE WHEN MD_AET_DIT_CD IN ('06') THEN MD_AET_AMT ELSE 0 END)  
+                ,은행_대출_신용_계좌수 + 은행_대출_전세자금_계좌수 + 은행_대출_예적금담보_계좌수 + 은행_대출_주택연금_계좌수 + 은행_대출_주택담보_계좌수 + 은행_대출_기타_계좌수 AS 은행_대출_계좌수 -- SUM(CASE WHEN MD_AET_DIT_CD IN ('06') THEN 1 ELSE 0 END)  
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '1001'  THEN MD_AET_AMT ELSE 0 END) AS 은행_현금저축_자유입출 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '1001' THEN 1 ELSE 0 END) 은행_현금저축_자유입출_계좌수 
+                 ,SUM(CASE WHEN MD_ACT_DIT_CD = '1002'  THEN MD_AET_AMT ELSE 0 END) AS 은행_현금저축_예금 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '1002' THEN 1 ELSE 0 END) 은행_현금저축_예금_계좌수 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '1003'  THEN MD_AET_AMT ELSE 0 END) AS 은행_현금저축_적금 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '1003' THEN 1 ELSE 0 END) 은행_현금저축_적금_계좌수 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '1999'  THEN MD_AET_AMT ELSE 0 END) AS 은행_현금저축_기타 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '1999'  THEN 1 ELSE 0 END) AS 은행_현금저축_기타_계좌수 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '2001'  THEN MD_AET_AMT ELSE 0 END) AS 은행_투자_수익증권 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '2001'  THEN 1 ELSE 0 END) AS 은행_투자_수익증권_계좌수 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '2002'  THEN MD_AET_AMT ELSE 0 END) AS 은행_투자_신탁 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '2002'  THEN 1 ELSE 0 END) AS 은행_투자_신탁_계좌수 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '2003'  THEN MD_AET_AMT ELSE 0 END) AS 은행_투자_신탁ISA 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '2003'  THEN 1 ELSE 0 END) AS 은행_투자_신탁ISA_계좌수 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '2004'  THEN MD_AET_AMT ELSE 0 END) AS 은행_투자_일임ISA 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '2004'  THEN 1 ELSE 0 END) AS 은행_투자_일임ISA_계좌수 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '2999'  THEN MD_AET_AMT ELSE 0 END) AS 은행_투자_기타 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '2999'  THEN 1 ELSE 0 END) AS 은행_투자_기타_계좌수 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '3100'  THEN MD_AET_AMT ELSE 0 END) AS 은행_대출_신용 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '3100'  THEN 1 ELSE 0 END) AS 은행_대출_신용_계좌수 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '3170'  THEN MD_AET_AMT ELSE 0 END) AS 은행_대출_전세자금 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '3170'  THEN 1 ELSE 0 END) AS 은행_대출_전세자금_계좌수 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '3200'  THEN MD_AET_AMT ELSE 0 END) AS 은행_대출_예적금담보 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '3200'  THEN 1 ELSE 0 END) AS 은행_대출_예적금담보_계좌수 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '3220'  THEN MD_AET_AMT ELSE 0 END) AS 은행_대출_주택담보 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '3220'  THEN 1 ELSE 0 END) AS 은행_대출_주택담보_계좌수 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '3260'  THEN MD_AET_AMT ELSE 0 END) AS 은행_대출_주택연금 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD = '3260'  THEN 1 ELSE 0 END) AS 은행_대출_주택연금_계좌수 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD NOT IN ('1001', '1002', '1003', '1999', '2001', '2002', '2003', '2004', '2999', '3100', '3170', '3200', '3220', '3260') THEN MD_AET_AMT ELSE 0 END) AS 은행_대출_기타 
+                ,SUM(CASE WHEN MD_ACT_DIT_CD NOT IN ('1001', '1002', '1003', '1999', '2001', '2002', '2003', '2004', '2999', '3100', '3170', '3200', '3220', '3260') THEN 1 ELSE 0 END) AS 은행_대출_기타_계좌수 
+        FROM ( 
+            SELECT BA01.CUS_NO 
+                ,CASE   
+                    WHEN BA01.MD_ACT_DIT_CD LIKE '1%' THEN '01' -- 자유입출금 
+                    WHEN BA01.MD_ACT_DIT_CD LIKE '2%' THEN '02' -- 투자 
+                    WHEN BA01.MD_ACT_DIT_CD LIKE '3%' THEN '06' -- 대출 
+                    ELSE '00'  
+                    END                     AS MD_AET_DIT_CD    --5마이데이터자산구분코드 
+                ,BA01.MD_OGT_CD             AS    MD_OGT_CD         -- 기관 
+                ,BA01.MD_ACT_NO             AS MD_ACT_NO        --7마이데이터계좌번호 
+                ,BA01.MD_TOR_IFO             AS MD_TOR_IFO        --8마이데이터회차정보 
+                ,BA01.MD_PDT_NM             AS MD_PDT_NM        --11상품명/계좌명 
+                ,BA01.MD_ACT_DIT_CD             AS MD_ACT_DIT_CD    --12계좌구분코드 
+                ,BA01.MD_ACT_STS_CD             AS MD_ACT_STS_CD    --13계좌상태코드 
+                ,ISNULL(BA03.MD_NOW_RND,0) + ISNULL(BA06.MD_EAL_AMT,0) + ISNULL(BA09.MD_LON_RND,0) AS MD_AET_AMT --14마이데이터자산금액 
+                FROM ( 
+                        SELECT A.CUS_NO 
+                            ,A.MD_OGT_CD        --마이데이터기관코드 
+                            ,A.MD_ACT_NO        --마이데이터계좌정보 
+                            ,A.MD_TOR_IFO        --마이데이터회차정보 
+                            ,A.MD_PDT_NM         --마이데이터상품명 
+                            ,A.MIUS_CTC_YN         --마이너스약정여부 
+                            ,A.MD_ACT_DIT_CD     --마이데이터계좌구분코드 
+                            ,A.MD_ACT_STS_CD     --마이데이터계좌상태코드 
+                            ,A.FNC_OGT_FST_MMB_JIN_DT --금융기관최초회원가입일자  
+                            ,A.FC_ACT_YN              --외화계좌여부 
+                        FROM DBM.EMYDW_BNK_ACT_CLG AS A --은행01:마이데이터_은행계좌목록 
+                        INNER JOIN ( 
+                            SELECT    CUS_NO  
+                                ,MD_OGT_CD 
+                                ,MAX(BSE_DT) AS BSE_DT 
+                            FROM DBM.EMYDW_BNK_ACT_CLG V1 
+                            WHERE V1.BSE_DT <= VS_작업일 
+                            GROUP    BY CUS_NO, MD_OGT_CD 
+                        ) AS B 
+                        ON    A.BSE_DT        = B.BSE_DT 
+                        AND    A.CUS_NO         = B.CUS_NO 
+                        AND    A.MD_OGT_CD        = B.MD_OGT_CD 
+                ) BA01 
+                --은행수신 
+                LEFT OUTER JOIN ( 
+                    SELECT A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO, A.MD_TOR_IFO -- 마이데이터회차정보 
+                        ,MAX(A.ACT_OPN_DT) AS ACT_OPN_DT     --계좌개설일자 
+                        ,MAX(A.XRN_DT) AS XRN_DT             --만기일자 
+                        ,SUM(A.PYMT_CTC_AMT * ISNULL(B.SBY_BSE_XCG_RT,1)) AS 납입약정금액    -- 납입약정금액 * 은행공시환율 = 납입약정금액 (이미납입한금액) 
+                        ,SUM(A.MM_PYMT_REQ_AMT * ISNULL(B.SBY_BSE_XCG_RT,1)) AS 월납입신청금액    -- 월납입신청금액 * 은행공시환율 = 월납입신청금액 (매월 빠져나갈 금액) 
+                    FROM DBM.EMYDW_BNK_DPACT_BAS_IFO A --은행02:마이데이터_은행수신계좌기본정보 
+                    LEFT OUTER JOIN ( 
+                        SELECT    BNK_PBA_XCG_RT_DT 
+                            ,CUR_CD 
+                            ,SBY_BSE_XCG_RT 
+                        FROM ( 
+                            SELECT  /*+ index(x ECBSW_BNK_PBA_XCG_RT_IX02) */ 
+                                 BNK_PBA_XCG_RT_DT 
+                                ,CUR_CD 
+                                ,SBY_BSE_XCG_RT 
+                                ,ROW_NUMBER() OVER(PARTITION BY CUR_CD ORDER BY BNK_PBA_XCG_RT_DT DESC) AS RN 
+                            FROM    DBM.ECBSW_BNK_PBA_XCG_RT  x 
+                            WHERE   BNK_PBA_XCG_RT_DT <= VS_작업일 
+                        ) AS V1 
+                        WHERE    RN = 1 
+                    ) AS B 
+                    ON A.CUR_CD = B.CUR_CD 
+                    INNER JOIN ( 
+                        SELECT    CUS_NO  
+                            ,MD_OGT_CD 
+                            ,MAX(BSE_DT) AS BSE_DT 
+                        FROM DBM.EMYDW_BNK_DPACT_BAS_IFO V1 
+                        WHERE V1.BSE_DT <=  VS_작업일 
+                        GROUP    BY CUS_NO  
+                            ,MD_OGT_CD 
+                    ) AS C 
+                    ON    A.BSE_DT        = C.BSE_DT 
+                    AND    A.CUS_NO         = C.CUS_NO 
+                    AND    A.MD_OGT_CD        = C.MD_OGT_CD 
+                    GROUP BY A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO, A.MD_TOR_IFO         
+                ) BA02         
+                ON BA01.CUS_NO         = BA02.CUS_NO 
+                AND BA01.MD_OGT_CD     = BA02.MD_OGT_CD 
+                AND BA01.MD_ACT_NO     = BA02.MD_ACT_NO 
+                AND BA01.MD_TOR_IFO     = BA02.MD_TOR_IFO 
+                LEFT OUTER JOIN ( 
+                    SELECT    A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO, A.MD_TOR_IFO 
+                        ,SUM(A.MD_NOW_RND * ISNULL(B.SBY_BSE_XCG_RT,1))         AS MD_NOW_RND         --현재잔액(자산항목) 
+                        ,SUM(A.MD_DRN_PBL_AMT * ISNULL(B.SBY_BSE_XCG_RT,1))     AS MD_DRN_PBL_AMT   --마이데이터출금가능금액 
+                        ,MAX(MD_ALY_IRT)                                         AS MD_ALY_IRT         --마이데이터적용금리 
+                        ,MAX(LST_PYMT_TOR)                                         AS LST_PYMT_TOR     --최종납입회차 
+                    FROM DBM.EMYDW_BNK_DPACT_APD_IFO AS A --은행03:마이데이터_은행수신계좌추가정보 
+                    LEFT OUTER JOIN ( 
+                        SELECT    BNK_PBA_XCG_RT_DT 
+                            ,CUR_CD 
+                            ,SBY_BSE_XCG_RT 
+                        FROM ( 
+                            SELECT  /*+ index(x ECBSW_BNK_PBA_XCG_RT_IX02) */ 
+                                 BNK_PBA_XCG_RT_DT 
+                                ,CUR_CD 
+                                ,SBY_BSE_XCG_RT 
+                                ,ROW_NUMBER() OVER(PARTITION BY CUR_CD ORDER BY BNK_PBA_XCG_RT_DT DESC) AS RN 
+                            FROM    DBM.ECBSW_BNK_PBA_XCG_RT  x 
+                            WHERE   BNK_PBA_XCG_RT_DT <= VS_작업일 
+                        ) AS V1 
+                        WHERE    RN = 1 
+                    ) AS B 
+                    ON A.CUR_CD = B.CUR_CD 
+                    INNER JOIN ( 
+                        SELECT    CUS_NO  
+                            ,MD_OGT_CD 
+                            ,MAX(BSE_DT) AS BSE_DT 
+                        FROM DBM.EMYDW_BNK_DPACT_APD_IFO V1 
+                        WHERE V1.BSE_DT <= VS_작업일 
+                        GROUP    BY CUS_NO  
+                            ,MD_OGT_CD 
+                    ) AS C 
+                    ON    A.BSE_DT        = C.BSE_DT 
+                    AND    A.CUS_NO         = C.CUS_NO 
+                    AND    A.MD_OGT_CD        = C.MD_OGT_CD 
+                    GROUP BY A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO, A.MD_TOR_IFO 
+                ) AS BA03 
+                ON BA01.CUS_NO         = BA03.CUS_NO 
+                AND BA01.MD_OGT_CD     = BA03.MD_OGT_CD 
+                AND BA01.MD_ACT_NO     = BA03.MD_ACT_NO 
+                AND BA01.MD_TOR_IFO     = BA03.MD_TOR_IFO 
+                -- 은행투자 
+                LEFT OUTER JOIN( 
+                    SELECT    A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO, A.MD_TOR_IFO 
+                        ,FND_CD    --펀드코드  
+                        ,MD_IVS_PDT_PYMT_TP_CD --투자상품납입유형코드: 임의식, 적립식, 거치식  
+                        ,OPN_DT --개설일자  
+                        ,XRN_DT --만기일자  
+                    FROM DBM.EMYDW_BNK_IPACT_BAS_IFO A --은행05:마이데이터_은행투자상품계좌기본정보  
+                    INNER JOIN ( 
+                        SELECT    CUS_NO  
+                            ,MD_OGT_CD 
+                            ,MAX(BSE_DT) AS BSE_DT 
+                        FROM DBM.EMYDW_BNK_IPACT_BAS_IFO V1 
+                        WHERE V1.BSE_DT <= VS_작업일 
+                        GROUP    BY CUS_NO  
+                            ,MD_OGT_CD 
+                    ) AS B 
+                    ON    A.BSE_DT        = B.BSE_DT 
+                    AND    A.CUS_NO         = B.CUS_NO 
+                    AND    A.MD_OGT_CD        = B.MD_OGT_CD 
+                --투자기본은 통화코드존재하지 않음 GROUP BY CUS_NO, MD_OGT_CD, MD_ACT_NO, MD_TOR_IFO 
+                ) BA05 
+                ON BA01.CUS_NO         = BA05.CUS_NO 
+                AND BA01.MD_OGT_CD     = BA05.MD_OGT_CD 
+                AND BA01.MD_ACT_NO     = BA05.MD_ACT_NO 
+                AND BA01.MD_TOR_IFO     = BA05.MD_TOR_IFO 
+                LEFT OUTER JOIN ( 
+                    SELECT    A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO, A.MD_TOR_IFO 
+                        ,A.MD_EAL_AMT * ISNULL(B.SBY_BSE_XCG_RT,1) AS MD_EAL_AMT     --평가금액(자산항목) 
+                        ,A.MD_NOW_RND * ISNULL(B.SBY_BSE_XCG_RT,1) AS MD_NOW_RND    --마이데이터현재잔액 
+                        ,A.MD_IVS_AMT * ISNULL(B.SBY_BSE_XCG_RT,1) AS MD_IVS_AMT    --마이데이터투자금액 
+                        ,A.MD_HLD_SQTY * ISNULL(B.SBY_BSE_XCG_RT,1) AS MD_HLD_SQTY    --마이데이터보유좌수 
+                    FROM DBM.EMYDW_BNK_IPACT_APD_IFO AS A --은행06:마이데이터_은행투자상품계좌추가정보 
+                    LEFT OUTER JOIN ( 
+                        SELECT    BNK_PBA_XCG_RT_DT 
+                            ,CUR_CD 
+                            ,SBY_BSE_XCG_RT 
+                        FROM ( 
+                            SELECT  /*+ index(x ECBSW_BNK_PBA_XCG_RT_IX02) */ 
+                                 BNK_PBA_XCG_RT_DT 
+                                ,CUR_CD 
+                                ,SBY_BSE_XCG_RT 
+                                ,ROW_NUMBER() OVER(PARTITION BY CUR_CD ORDER BY BNK_PBA_XCG_RT_DT DESC) AS RN 
+                            FROM    DBM.ECBSW_BNK_PBA_XCG_RT  x 
+                            WHERE   BNK_PBA_XCG_RT_DT <= VS_작업일 
+                        ) AS V1 
+                        WHERE    RN = 1 
+                    ) AS B 
+                    ON A.CUR_CD = B.CUR_CD 
+                    INNER JOIN ( 
+                        SELECT    CUS_NO  
+                            ,MD_OGT_CD 
+                            ,MAX(BSE_DT) AS BSE_DT 
+                        FROM DBM.EMYDW_BNK_IPACT_APD_IFO V1 
+                        WHERE V1.BSE_DT <= VS_작업일 
+                        GROUP    BY CUS_NO  
+                            ,MD_OGT_CD 
+                    ) AS C 
+                    ON    A.BSE_DT        = C.BSE_DT 
+                    AND    A.CUS_NO         = C.CUS_NO 
+                    AND    A.MD_OGT_CD        = C.MD_OGT_CD 
+                    --투자추가는 통화코드가 속성임 GROUP BY CUS_NO, MD_OGT_CD, MD_ACT_NO, MD_TOR_IFO 
+                ) BA06 
+                ON BA01.CUS_NO         = BA06.CUS_NO 
+                AND BA01.MD_OGT_CD     = BA06.MD_OGT_CD 
+                AND BA01.MD_ACT_NO     = BA06.MD_ACT_NO 
+                AND BA01.MD_TOR_IFO     = BA06.MD_TOR_IFO 
+                --은행대출 
+                LEFT OUTER JOIN ( 
+                    SELECT    A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO, A.MD_TOR_IFO 
+                        ,LON_DT    --대출일자 
+                        ,XRN_DT    --만기일자 
+                        ,MD_LST_ALY_IRT    --마이데이터최종적용금리 
+                        ,LON_MM_RDP_DD    --대출월상환일 
+                        ,LON_RDP_MTD_CD    --대출상환방법코드 
+                        ,MD_AAT_OGT_NO    --마이데이터자동이체기관번호 
+                        ,MD_RDP_ACT_NO    --마이데이터상환계좌번호 
+                    FROM DBM.EMYDW_BNK_LPACT_BAS_IFO A --은행08:마이데이터_은행대출상품계좌추가정보 
+                    INNER JOIN ( 
+                        SELECT    CUS_NO  
+                            ,MD_OGT_CD 
+                            ,MAX(BSE_DT) AS BSE_DT 
+                        FROM DBM.EMYDW_BNK_LPACT_BAS_IFO V1 
+                        WHERE V1.BSE_DT <= VS_작업일 
+                        GROUP    BY CUS_NO  
+                            ,MD_OGT_CD 
+                    ) AS B 
+                    ON    A.BSE_DT        = B.BSE_DT 
+                    AND    A.CUS_NO         = B.CUS_NO 
+                    AND    A.MD_OGT_CD        = B.MD_OGT_CD 
+                    --대출기본은 통화코드존재하지 않음 GROUP BY CUS_NO, MD_OGT_CD, MD_ACT_NO, MD_TOR_IFO 
+                ) BA08 
+                ON BA01.CUS_NO         = BA08.CUS_NO 
+                AND BA01.MD_OGT_CD     = BA08.MD_OGT_CD 
+                AND BA01.MD_ACT_NO     = BA08.MD_ACT_NO 
+                AND BA01.MD_TOR_IFO     = BA08.MD_TOR_IFO 
+                LEFT OUTER JOIN ( 
+                    SELECT    A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO, A.MD_TOR_IFO 
+                        ,A.MD_LON_RND * ISNULL(B.SBY_BSE_XCG_RT,1) AS MD_LON_RND --마이데이터대출잔액(자산항목) 
+                        ,A.MD_LON_PNA * ISNULL(B.SBY_BSE_XCG_RT,1) AS MD_LON_PNA --마이데이터대출원금  
+                        ,A.NXI_INT_RDP_DT    --차회이자상환일자 
+                    FROM DBM.EMYDW_BNK_LPACT_APD_IFO A --은행09:마이데이터_은행대출상품계좌추가정보 
+                    LEFT OUTER JOIN ( 
+                        SELECT    BNK_PBA_XCG_RT_DT 
+                            ,CUR_CD 
+                            ,SBY_BSE_XCG_RT 
+                        FROM ( 
+                            SELECT  /*+ index(x ECBSW_BNK_PBA_XCG_RT_IX02) */ 
+                                 BNK_PBA_XCG_RT_DT 
+                                ,CUR_CD 
+                                ,SBY_BSE_XCG_RT 
+                                ,ROW_NUMBER() OVER(PARTITION BY CUR_CD ORDER BY BNK_PBA_XCG_RT_DT DESC) AS RN 
+                            FROM    DBM.ECBSW_BNK_PBA_XCG_RT  x 
+                            WHERE   BNK_PBA_XCG_RT_DT <= VS_작업일 
+                        ) AS V1 
+                        WHERE    RN = 1 
+                    ) AS B 
+                    ON A.CUR_CD = B.CUR_CD 
+                    INNER JOIN ( 
+                        SELECT    CUS_NO  
+                            ,MD_OGT_CD 
+                            ,MAX(BSE_DT) AS BSE_DT 
+                        FROM DBM.EMYDW_BNK_LPACT_APD_IFO V1 
+                        WHERE V1.BSE_DT <= VS_작업일 
+                        GROUP    BY CUS_NO  
+                            ,MD_OGT_CD 
+                    ) AS C 
+                    ON    A.BSE_DT        = C.BSE_DT 
+                    AND    A.CUS_NO         = C.CUS_NO 
+                    AND    A.MD_OGT_CD        = C.MD_OGT_CD 
+                    --대출추가정보는 통화코드가 속성임 GROUP BY CUS_NO, MD_OGT_CD, MD_ACT_NO, MD_TOR_IFO 
+                ) BA09     
+                ON BA01.CUS_NO         = BA09.CUS_NO 
+                AND BA01.MD_OGT_CD     = BA09.MD_OGT_CD 
+                AND BA01.MD_ACT_NO     = BA09.MD_ACT_NO 
+                AND BA01.MD_TOR_IFO = BA09.MD_TOR_IFO 
+        ) AS BA15 
+        GROUP BY BA15.CUS_NO 
+    ) AS V8  
+    ON V1.CUS_NO = V8.CUS_NO 
+    LEFT OUTER JOIN ( 
+                        SELECT  DISTINCT V11.CUS_NO 
+                                ,V11.원천타사증권가입여부 
+                                ,V11.증권_등록기관수 
+                                ,V11.증권_현금저축 
+                                ,V11.증권_투자 
+                                ,V11.증권_연금 
+                                ,V11.증권_대출 
+                        -- 401=국내주식 / 402=해외주식 / 403=국내채권 / 404=해외채권 / 405=대출채권 / 406=국내파생결합증권 / 407=해외파생결합증권 / 408=국내장내파생상품 / 409=해외장내파생상품 / 410=기타파생상품  
+                        -- 411=국내단기금융상품 / 412=해외단기금융상품 / 413=국내펀드 / 414=해외(역내)펀드 / 415=해외(역외)펀드 / 416=랩 / 417=신탁 / 418=현금과예금 / 419=퇴직연금 / 420=현물 / 421=기타  
+                                ,타사증권_국내주식_보유자산 
+                                ,타사증권_국내주식_보유종목수 
+                                ,타사증권_해외주식_보유자산 
+                                ,타사증권_해외주식_보유종목수 
+                                ,타사증권_국내채권_보유자산 
+                                ,타사증권_국내채권_보유종목수 
+                                ,타사증권_해외채권_보유자산 
+                                ,타사증권_해외채권_보유종목수 
+                                ,타사증권_대출채권_보유자산 
+                                ,타사증권_대출채권_보유종목수 
+                                ,타사증권_국내파생결합증권_보유자산 
+                                ,타사증권_국내파생결합증권_보유종목수 
+                                ,타사증권_해외파생결합증권_보유자산 
+                                ,타사증권_해외파생결합증권_보유종목수 
+                                ,타사증권_국내장내파생상품_보유자산 
+                                ,타사증권_국내장내파생상품_보유종목수 
+                                ,타사증권_해외장내파생상품_보유자산 
+                                ,타사증권_해외장내파생상품_보유종목수 
+                                ,타사증권_기타파생상품_보유자산 
+                                ,타사증권_기타파생상품_보유종목수 
+                                ,타사증권_국내단기금융상품_보유자산 
+                                ,타사증권_국내단기금융상품_보유종목수 
+                                ,타사증권_해외단기금융상품_보유자산 
+                                ,타사증권_해외단기금융상품_보유종목수 
+                                ,타사증권_국내펀드_보유자산 
+                                ,타사증권_국내펀드_보유종목수 
+                                ,타사증권_해외역내펀드_보유자산 
+                                ,타사증권_해외역내펀드_보유종목수 
+                                ,타사증권_해외역외펀드_보유자산 
+                                ,타사증권_해외역외펀드_보유종목수 
+                                ,타사증권_랩_보유자산 
+                                ,타사증권_랩_보유종목수 
+                                ,타사증권_신탁_보유자산 
+                                ,타사증권_신탁_보유종목수 
+                                ,타사증권_현금과예금_보유자산 
+                                ,타사증권_현금과예금_보유종목수 
+                                ,타사증권_퇴직연금_보유자산 
+                                ,타사증권_퇴직연금_보유종목수 
+                                ,타사증권_현물_보유자산 
+                                ,타사증권_현물_보유종목수 
+                                ,타사증권_기타_보유자산 
+                                ,타사증권_기타_보유종목수 
+                                ,타사증권_상품별_현금성자산 
+                        FROM (    SELECT DISTINCT CUS_NO 
+                                    ,'Y' AS 원천타사증권가입여부  
+                                    ,COUNT(DISTINCT MD_OGT_CD) AS 증권_등록기관수 
+                                    ,SUM(CASE WHEN MD_AET_DIT_CD IN ('01') THEN MD_AET_AMT ELSE 0 END) AS 증권_현금저축 
+                                    ,SUM(CASE WHEN MD_AET_DIT_CD IN ('02') THEN MD_AET_AMT ELSE 0 END) AS 증권_투자 
+                                    ,SUM(CASE WHEN MD_AET_DIT_CD IN ('04') THEN MD_AET_AMT ELSE 0 END) AS 증권_연금 
+                                    ,SUM(CASE WHEN MD_AET_DIT_CD IN ('06') THEN MD_AET_AMT ELSE 0 END) AS 증권_대출 
+                                FROM    ( 
+                                    SELECT    IV01.CUS_NO 
+                                        ,ISNULL(IV01.MD_OGT_CD,'_')     AS MD_OGT_CD        --3마이데이터기관코드 
+                                        --자산구분코드  
+                                        ,IV99.MD_AET_DIT_CD                    --5마이데이터자산구분코드 
+                                        ,'invest'             AS MD_BIZR_IFO        --6마이데이터업권정보 
+                                        ,IV01.MD_ACT_NO         AS MD_ACT_NO        --7마이데이터계좌번호 
+                                        ,IV01.ACT_NM             AS MD_PDT_NM        --11상품명/계좌명 
+                                        ,IV01.MD_FNC_IVS_ACT_DIT_CD     AS MD_ACT_DIT_CD    --12계좌구분코드 
+                                        ,ISNULL(IV99.MD_EAL_AMT,0)     AS MD_AET_AMT        --14마이데이터자산금액 
+                                    FROM ( 
+                                        SELECT    A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO 
+                                            ,ACT_NM    --계좌명 
+                                            ,MD_FNC_IVS_ACT_DIT_CD    --마이데이터금융투자계좌구분코드 (101:종합매매, 102:위탁, 103:파생상품, 104:단기금융상품, 105:연금, 106:현물, 107:집합투자증권, 108:isa, 109:기타) 
+                                        FROM DBM.EMYDW_FIN_ACT_CLG A --금투01:마이데이터_금융투자계좌목록 
+                                        INNER JOIN ( 
+                                            SELECT    CUS_NO  
+                                                ,MD_OGT_CD 
+                                                ,MAX(BSE_DT) AS BSE_DT 
+                                            FROM DBM.EMYDW_FIN_ACT_CLG V1 
+                                            WHERE V1.BSE_DT <= VS_작업일 
+                                            GROUP    BY CUS_NO  
+                                                ,MD_OGT_CD 
+                                        ) AS B 
+                                        ON    A.BSE_DT        = B.BSE_DT 
+                                        AND    A.CUS_NO         = B.CUS_NO 
+                                        AND    A.MD_OGT_CD        = B.MD_OGT_CD 
+                                        --WHERE    A.MD_OGT_CD        IN ('C1AACQ0000') 
+                                        WHERE    A.MD_OGT_CD        NOT IN ('C1AACQ0000') 
+                                    ) IV01 
+                                    LEFT OUTER JOIN( 
+                                        SELECT V1.CUS_NO, V1.MD_OGT_CD, V1.MD_ACT_NO, V1.MD_AET_DIT_CD, SUM(V1.MD_EAL_AMT) AS MD_EAL_AMT 
+                                        FROM( 
+                                            --1.예수금 
+                                            SELECT    IV01.CUS_NO 
+                                                ,IV01.MD_OGT_CD 
+                                                ,IV01.MD_ACT_NO 
+                                                ,CASE WHEN IV01.MD_FNC_IVS_ACT_DIT_CD ='105' THEN '04'     --연금자산예수금은 연금 
+                                                    ELSE '01'                                              --그외 예수금은 예적금/수시입출 
+                                                    END AS MD_AET_DIT_CD                                --5마이데이터자산구분코드 
+                                                ,IV02.MD_EAL_AMT 
+                                            FROM ( 
+                                                SELECT    A.CUS_NO 
+                                                    ,A.MD_OGT_CD 
+                                                    ,A.MD_ACT_NO 
+                                                    ,A.MD_FNC_IVS_ACT_DIT_CD    --마이데이터금융투자계좌구분코드 
+                                                FROM DBM.EMYDW_FIN_ACT_CLG A --금투01:마이데이터_금융투자계좌목록 
+                                                INNER JOIN ( 
+                                                    SELECT    CUS_NO  
+                                                        ,MD_OGT_CD 
+                                                        ,MAX(BSE_DT) AS BSE_DT 
+                                                    FROM DBM.EMYDW_FIN_ACT_CLG V1 
+                                                    WHERE V1.BSE_DT <=  VS_작업일 
+                                                    GROUP    BY CUS_NO  
+                                                        ,MD_OGT_CD 
+                                                ) AS B 
+                                                ON    A.BSE_DT        = B.BSE_DT 
+                                                AND    A.CUS_NO         = B.CUS_NO 
+                                                AND    A.MD_OGT_CD        = B.MD_OGT_CD 
+                                            ) IV01 
+                                            INNER JOIN ( 
+                                                SELECT    A.BSE_DT, A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO 
+                                                    ,A.MD_DCA * ISNULL(B.SBY_BSE_XCG_RT,1) AS MD_EAL_AMT --마이데이터예수금(자산항목) 
+                                                FROM DBM.EMYDW_FIN_ACT_BAS_IFO A --금투02:마이데이터_금융투자계좌기본정보 
+                                                LEFT OUTER JOIN ( 
+                                                    SELECT    BNK_PBA_XCG_RT_DT 
+                                                        ,CUR_CD 
+                                                        ,SBY_BSE_XCG_RT 
+                                                    FROM ( 
+                                                        SELECT  /*+ index(x ECBSW_BNK_PBA_XCG_RT_IX02) */ 
+                                                             BNK_PBA_XCG_RT_DT 
+                                                            ,CUR_CD 
+                                                            ,SBY_BSE_XCG_RT 
+                                                            ,ROW_NUMBER() OVER(PARTITION BY CUR_CD ORDER BY BNK_PBA_XCG_RT_DT DESC) AS RN 
+                                                        FROM    DBM.ECBSW_BNK_PBA_XCG_RT  x 
+                                                        WHERE   BNK_PBA_XCG_RT_DT <= VS_작업일 
+                                                    ) AS V1 
+                                                    WHERE    RN = 1 
+                                                ) AS B 
+                                                ON A.CUR_CD = B.CUR_CD 
+                                                INNER JOIN ( 
+                                                    SELECT    CUS_NO  
+                                                        ,MD_OGT_CD 
+                                                        ,MAX(BSE_DT) AS BSE_DT 
+                                                    FROM DBM.EMYDW_FIN_ACT_BAS_IFO V1 
+                                                    WHERE V1.BSE_DT <= VS_작업일 
+                                                    GROUP    BY CUS_NO  
+                                                        ,MD_OGT_CD 
+                                                ) AS C 
+                                                ON    A.BSE_DT        = C.BSE_DT 
+                                                AND    A.CUS_NO         = C.CUS_NO 
+                                                AND    A.MD_OGT_CD        = C.MD_OGT_CD 
+                                            ) IV02 
+                                            ON IV01.CUS_NO         = IV02.CUS_NO   --존재하는경우만 INNER JOIN  
+                                            AND IV01.MD_OGT_CD     = IV02.MD_OGT_CD 
+                                            AND IV01.MD_ACT_NO     = IV02.MD_ACT_NO 
+                                            --2.증권평가금액  
+                                            UNION ALL 
+                                            SELECT    IV01.CUS_NO, IV01.MD_OGT_CD, IV01.MD_ACT_NO 
+                                                ,CASE  
+                                                    WHEN IV01.MD_FNC_IVS_ACT_DIT_CD ='105' THEN '04'     --연금자산 평가금액(+예수금필요) 
+                                                    WHEN IV04.MD_PDT_KND_CD = '418' THEN '01'           --418:예적금/수시입출금자산 평가금액(+예수금필요) 
+                                                    ELSE '02'                         --투자자산 평가금액   
+                                                END AS MD_AET_DIT_CD    --5마이데이터자산구분코드 
+                                                ,IV04.MD_EAL_AMT 
+                                            FROM ( 
+                                                SELECT    A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO 
+                                                    ,ACT_NM    --계좌명 
+                                                    ,MD_FNC_IVS_ACT_DIT_CD    --마이데이터금융투자계좌구분코드 
+                                                FROM DBM.EMYDW_FIN_ACT_CLG AS A --금투01:마이데이터_금융투자계좌목록 
+                                                INNER JOIN ( 
+                                                    SELECT    CUS_NO  
+                                                        ,MD_OGT_CD 
+                                                        ,MAX(BSE_DT) AS BSE_DT 
+                                                    FROM DBM.EMYDW_FIN_ACT_CLG V1 
+                                                    WHERE V1.BSE_DT <= VS_작업일 
+                                                    GROUP    BY CUS_NO  
+                                                        ,MD_OGT_CD 
+                                                ) AS B 
+                                                ON    A.BSE_DT        = B.BSE_DT 
+                                                AND    A.CUS_NO         = B.CUS_NO 
+                                                AND    A.MD_OGT_CD        = B.MD_OGT_CD 
+                                            ) IV01 
+                                            LEFT OUTER JOIN ( 
+                                                SELECT    A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO, 
+                                                    A.MD_PDT_KND_CD, --상품종류코드  
+                                                    A.MD_EAL_AMT * ISNULL(B.SBY_BSE_XCG_RT,1) AS MD_EAL_AMT --마이데이터평가금액(자산항목) 
+                                                FROM DBM.EMYDW_FIN_ACT_PDT_IFO AS A --금투:04마이데이터_금융투자계좌상품정보 
+                                                LEFT OUTER JOIN ( 
+                                                    SELECT    BNK_PBA_XCG_RT_DT 
+                                                        ,CUR_CD 
+                                                        ,SBY_BSE_XCG_RT 
+                                                    FROM ( 
+                                                        SELECT  /*+ index(x ECBSW_BNK_PBA_XCG_RT_IX02) */ 
+                                                             BNK_PBA_XCG_RT_DT 
+                                                            ,CUR_CD 
+                                                            ,SBY_BSE_XCG_RT 
+                                                            ,ROW_NUMBER() OVER(PARTITION BY CUR_CD ORDER BY BNK_PBA_XCG_RT_DT DESC) AS RN 
+                                                        FROM    DBM.ECBSW_BNK_PBA_XCG_RT  x 
+                                                        WHERE   BNK_PBA_XCG_RT_DT <= VS_작업일 
+                                                    ) AS V1 
+                                                    WHERE    RN = 1 
+                                                ) AS B 
+                                                ON A.CUR_CD = B.CUR_CD 
+                                                INNER JOIN ( 
+                                                    SELECT    CUS_NO  
+                                                        ,MD_OGT_CD 
+                                                        ,MAX(BSE_DT) AS BSE_DT 
+                                                    FROM DBM.EMYDW_FIN_ACT_PDT_IFO V1 
+                                                    WHERE V1.BSE_DT <= VS_작업일 
+                                                    GROUP    BY CUS_NO  
+                                                        ,MD_OGT_CD 
+                                                ) AS C 
+                                                ON    A.BSE_DT        = C.BSE_DT 
+                                                AND    A.CUS_NO         = C.CUS_NO 
+                                                AND    A.MD_OGT_CD        = C.MD_OGT_CD                     
+                                            ) IV04 
+                                            ON IV01.CUS_NO         = IV04.CUS_NO 
+                                            AND IV01.MD_OGT_CD     = IV04.MD_OGT_CD 
+                                            AND IV01.MD_ACT_NO     = IV04.MD_ACT_NO 
+                                            --3.증권대출금액 
+                                            UNION ALL  
+                                            SELECT IV02.CUS_NO, ISNULL(IV02.MD_OGT_CD,'0') AS MD_OGT_CD, IV02.MD_ACT_NO 
+                                                ,'06' MD_AET_DIT_CD    --5마이데이터자산구분코드 
+                                                ,(IV02.MD_CFD_FNN_AMT * ISNULL(B.SBY_BSE_XCG_RT,1)) -- 마이데이터신용융자금액 + 마이데이터대출금액 
+                                                    + (IV02.MD_LON_AMT * ISNULL(B.SBY_BSE_XCG_RT,1)) AS MD_EAL_AMT 
+                                            FROM DBM.EMYDW_FIN_ACT_BAS_IFO IV02 --금투:02마이데이터_금융투자계좌기본정보 
+                                            LEFT OUTER JOIN ( 
+                                                SELECT    BNK_PBA_XCG_RT_DT 
+                                                    ,CUR_CD 
+                                                    ,SBY_BSE_XCG_RT 
+                                                FROM ( 
+                                                    SELECT  /*+ index(x ECBSW_BNK_PBA_XCG_RT_IX02) */ 
+                                                         BNK_PBA_XCG_RT_DT 
+                                                        ,CUR_CD 
+                                                        ,SBY_BSE_XCG_RT 
+                                                        ,ROW_NUMBER() OVER(PARTITION BY CUR_CD ORDER BY BNK_PBA_XCG_RT_DT DESC) AS RN 
+                                                    FROM    DBM.ECBSW_BNK_PBA_XCG_RT  x 
+                                                    WHERE   BNK_PBA_XCG_RT_DT <= VS_작업일 
+                                                ) AS V1 
+                                                WHERE    RN = 1 
+                                            ) AS B 
+                                            ON IV02.CUR_CD = B.CUR_CD 
+                                            INNER JOIN ( 
+                                                SELECT    CUS_NO  
+                                                    ,MD_OGT_CD 
+                                                    ,MAX(BSE_DT) AS BSE_DT 
+                                                FROM DBM.EMYDW_FIN_ACT_BAS_IFO V1 
+                                                WHERE V1.BSE_DT <= VS_작업일 
+                                                GROUP    BY CUS_NO  
+                                                    ,MD_OGT_CD 
+                                            ) AS C 
+                                            ON    IV02.BSE_DT        = C.BSE_DT 
+                                            AND    IV02.CUS_NO         = C.CUS_NO 
+                                            AND    IV02.MD_OGT_CD        = C.MD_OGT_CD     
+                                            WHERE    IV02.MD_CFD_FNN_AMT + IV02.MD_LON_AMT > 0 --(20210917수정)증권대출존재하는건만                     
+                                        ) AS V1  
+                                        GROUP BY CUS_NO, MD_OGT_CD, MD_ACT_NO, MD_AET_DIT_CD                     
+                                    ) IV99 
+                                    ON IV01.CUS_NO         = IV99.CUS_NO 
+                                    AND IV01.MD_OGT_CD     = IV99.MD_OGT_CD 
+                                    AND IV01.MD_ACT_NO     = IV99.MD_ACT_NO 
+                                ) AS V1 
+                                GROUP BY V1.CUS_NO 
+                            ) AS V11 
+                            -- 22.10.11 마이데이터 상품별 추가항목 
+                            LEFT OUTER JOIN ( 
+                                SELECT DISTINCT V4.CUS_NO 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '401' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_국내주식_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '401' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_국내주식_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '402' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_해외주식_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '402' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_해외주식_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '403' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_국내채권_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '403' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_국내채권_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '404' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_해외채권_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '404' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_해외채권_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '405' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_대출채권_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '405' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_대출채권_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '406' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_국내파생결합증권_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '406' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_국내파생결합증권_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '407' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_해외파생결합증권_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '407' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_해외파생결합증권_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '408' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_국내장내파생상품_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '408' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_국내장내파생상품_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '409' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_해외장내파생상품_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '409' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_해외장내파생상품_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '410' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_기타파생상품_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '410' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_기타파생상품_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '411' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_국내단기금융상품_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '411' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_국내단기금융상품_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '412' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_해외단기금융상품_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '412' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_해외단기금융상품_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '413' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_국내펀드_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '413' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_국내펀드_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '414' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_해외역내펀드_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '414' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_해외역내펀드_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '415' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_해외역외펀드_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '415' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_해외역외펀드_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '416' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_랩_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '416' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_랩_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '417' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_신탁_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '417' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_신탁_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '418' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_현금과예금_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '418' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_현금과예금_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '419' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_퇴직연금_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '419' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_퇴직연금_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '420' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_현물_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '420' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_현물_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '421' THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_기타_보유자산' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD = '421' THEN 타사증권_상품별_보유종목수 ELSE 0 END) AS '타사증권_기타_보유종목수' 
+                                        ,SUM(CASE WHEN MD_PDT_KND_CD NOT IN ('401', '402', '403', '404', '405', '406', '407', '408', '409', '410', '411', '412', '413', '414', '415', '416', '417', '418', '419', '420', '421') THEN 타사증권_상품별_보유자산 ELSE 0 END) AS '타사증권_상품별_현금성자산' 
+                            FROM (    SELECT V4.CUS_NO 
+                                            ,MD_PDT_KND_CD -- 상품종류코드  
+                                            ,SUM(MD_EAL_AMT) AS 타사증권_상품별_보유자산 
+                                            ,COUNT(DISTINCT MD_IEM_CD) AS 타사증권_상품별_보유종목수 
+                                    FROM (        SELECT    A.BSE_DT, A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO, A.MD_PDT_KND_CD, A.MD_IEM_CD --마이데이터상품종류코드 
+                                                        ,A.MD_EAL_AMT * ISNULL(B.SBY_BSE_XCG_RT,1) AS MD_EAL_AMT --마이데이터상품평가금  
+                                                        -- 401=국내주식 / 402=해외주식 / 403=국내채권 / 404=해외채권 / 405=대출채권 / 406=국내파생결합증권 / 407=해외파생결합증권 / 408=국내장내파생상품 / 409=해외장내파생상품 / 410=기타파생상품  
+                                                        -- 411=국내단기금융상품 / 412=해외단기금융상품 / 413=국내펀드 / 414=해외(역내)펀드 / 415=해외(역외)펀드 / 416=랩 / 417=신탁 / 418=현금과예금 / 419=퇴직연금 / 420=현물 / 421=기타  
+                                                FROM DBM.EMYDW_FIN_ACT_PDT_IFO AS A --금투03:마이데이터_금융투자계좌상품정보 
+                                                        LEFT OUTER JOIN ( 
+                                                                SELECT    BNK_PBA_XCG_RT_DT 
+                                                                    ,CUR_CD 
+                                                                    ,SBY_BSE_XCG_RT 
+                                                                FROM ( 
+                                                                    SELECT  /*+ index(x ECBSW_BNK_PBA_XCG_RT_IX02) */ 
+                                                                         BNK_PBA_XCG_RT_DT 
+                                                                        ,CUR_CD 
+                                                                        ,SBY_BSE_XCG_RT 
+                                                                        ,ROW_NUMBER() OVER(PARTITION BY CUR_CD ORDER BY BNK_PBA_XCG_RT_DT DESC) AS RN 
+                                                                    FROM    DBM.ECBSW_BNK_PBA_XCG_RT  x 
+                                                                    WHERE   BNK_PBA_XCG_RT_DT <= VS_작업일 
+                                                                ) AS V1 
+                                                                WHERE    RN = 1 
+                                                        ) AS B 
+                                                        ON A.CUR_CD = B.CUR_CD 
+                                                        INNER JOIN ( 
+                                                            SELECT    CUS_NO  
+                                                                ,MD_OGT_CD 
+                                                                ,MAX(BSE_DT) AS BSE_DT 
+                                                            FROM DBM.EMYDW_FIN_ACT_BAS_IFO V1 
+                                                            WHERE V1.BSE_DT <= VS_작업일 
+                                                            GROUP    BY CUS_NO  
+                                                                ,MD_OGT_CD 
+                                                        ) AS C 
+                                                        ON    A.BSE_DT        = C.BSE_DT 
+                                                        AND    A.CUS_NO         = C.CUS_NO 
+                                                        AND    A.MD_OGT_CD        = C.MD_OGT_CD 
+                                                        -- 연금계좌제외 22.10.14 
+                                                        LEFT OUTER JOIN ( 
+                                                                SELECT    A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO, MD_FNC_IVS_ACT_DIT_CD, MAX(A.BSE_DT) AS BSE_DT  
+                                                                    --마이데이터금융투자계좌구분코드 (101:종합매매, 102:위탁, 103:파생상품, 104:단기금융상품, 105:연금, 106:현물, 107:집합투자증권, 108:isa, 109:기타) 
+                                                                FROM DBM.EMYDW_FIN_ACT_CLG AS A --금투01:마이데이터_금융투자계좌목록 
+                                                                    WHERE A.BSE_DT <= VS_작업일 
+                                                                    AND MD_FNC_IVS_ACT_DIT_CD <> '105'  
+                                                                    GROUP BY A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO, MD_FNC_IVS_ACT_DIT_CD 
+                                                        ) AS D 
+                                                        ON A.MD_ACT_NO = D.MD_ACT_NO 
+                                                        AND    A.MD_OGT_CD        = D.MD_OGT_CD 
+                                                        --AND A.BSE_DT = D.BSE_DT 
+                                                        WHERE    A.MD_OGT_CD    <> 'C1AACQ0000' 
+                                                        -- AND MD_PDT_KND_CD = '418' 
+                                    ) AS V4 
+                                    GROUP BY V4.BSE_DT, V4.CUS_NO ,V4.MD_PDT_KND_CD  
+                            ) AS V4  
+                            GROUP BY CUS_NO 
+                ) AS V4 
+                ON V11.CUS_NO = V4.CUS_NO 
+    ) AS V9  
+    ON V1.CUS_NO = V9.CUS_NO 
+    LEFT OUTER JOIN ( 
+        SELECT  DISTINCT V11.CUS_NO 
+                ,V11.원천당사증권가입여부 
+                ,V11.증권_등록기관수 
+                ,V11.증권_현금저축 
+                ,V11.증권_투자 
+                ,V11.증권_연금 
+                ,V11.증권_대출 
+        -- 401=국내주식 / 402=해외주식 / 403=국내채권 / 404=해외채권 / 405=대출채권 / 406=국내파생결합증권 / 407=해외파생결합증권 / 408=국내장내파생상품 / 409=해외장내파생상품 / 410=기타파생상품  
+        -- 411=국내단기금융상품 / 412=해외단기금융상품 / 413=국내펀드 / 414=해외(역내)펀드 / 415=해외(역외)펀드 / 416=랩 / 417=신탁 / 418=현금과예금 / 419=퇴직연금 / 420=현물 / 421=기타  
+                ,당사증권_국내주식_보유자산 
+                ,당사증권_국내주식_보유종목수 
+                ,당사증권_해외주식_보유자산 
+                ,당사증권_해외주식_보유종목수 
+                ,당사증권_국내채권_보유자산 
+                ,당사증권_국내채권_보유종목수 
+                ,당사증권_해외채권_보유자산 
+                ,당사증권_해외채권_보유종목수 
+                ,당사증권_대출채권_보유자산 
+                ,당사증권_대출채권_보유종목수 
+                ,당사증권_국내파생결합증권_보유자산 
+                ,당사증권_국내파생결합증권_보유종목수 
+                ,당사증권_해외파생결합증권_보유자산 
+                ,당사증권_해외파생결합증권_보유종목수 
+                ,당사증권_국내장내파생상품_보유자산 
+                ,당사증권_국내장내파생상품_보유종목수 
+                ,당사증권_해외장내파생상품_보유자산 
+                ,당사증권_해외장내파생상품_보유종목수 
+                ,당사증권_기타파생상품_보유자산 
+                ,당사증권_기타파생상품_보유종목수 
+                ,당사증권_국내단기금융상품_보유자산 
+                ,당사증권_국내단기금융상품_보유종목수 
+                ,당사증권_해외단기금융상품_보유자산 
+                ,당사증권_해외단기금융상품_보유종목수 
+                ,당사증권_국내펀드_보유자산 
+                ,당사증권_국내펀드_보유종목수 
+                ,당사증권_해외역내펀드_보유자산 
+                ,당사증권_해외역내펀드_보유종목수 
+                ,당사증권_해외역외펀드_보유자산 
+                ,당사증권_해외역외펀드_보유종목수 
+                ,당사증권_랩_보유자산 
+                ,당사증권_랩_보유종목수 
+                ,당사증권_신탁_보유자산 
+                ,당사증권_신탁_보유종목수 
+                ,당사증권_현금과예금_보유자산 
+                ,당사증권_현금과예금_보유종목수 
+                ,당사증권_퇴직연금_보유자산 
+                ,당사증권_퇴직연금_보유종목수 
+                ,당사증권_현물_보유자산 
+                ,당사증권_현물_보유종목수 
+                ,당사증권_기타_보유자산 
+                ,당사증권_기타_보유종목수 
+                ,당사증권_상품별_현금성자산 
+        FROM (    SELECT DISTINCT V1.CUS_NO 
+                    ,'Y' AS 원천당사증권가입여부  
+                    ,COUNT(DISTINCT MD_OGT_CD) AS 증권_등록기관수  
+                    ,SUM(CASE WHEN MD_AET_DIT_CD IN ('01') THEN MD_AET_AMT ELSE 0 END) AS 증권_현금저축 
+                    ,SUM(CASE WHEN MD_AET_DIT_CD IN ('02') THEN MD_AET_AMT ELSE 0 END) AS 증권_투자 
+                    ,SUM(CASE WHEN MD_AET_DIT_CD IN ('04') THEN MD_AET_AMT ELSE 0 END) AS 증권_연금 
+                    ,SUM(CASE WHEN MD_AET_DIT_CD IN ('06') THEN MD_AET_AMT ELSE 0 END) AS 증권_대출 
+                FROM    ( 
+                    SELECT    IV01.CUS_NO 
+                        ,ISNULL(IV01.MD_OGT_CD,'_')     AS MD_OGT_CD        --3마이데이터기관코드 
+                        --자산구분코드  
+                        ,IV99.MD_AET_DIT_CD                    --5마이데이터자산구분코드 
+                        ,'invest'             AS MD_BIZR_IFO        --6마이데이터업권정보 
+                        ,IV01.MD_ACT_NO         AS MD_ACT_NO        --7마이데이터계좌번호 
+                        ,IV01.ACT_NM             AS MD_PDT_NM        --11상품명/계좌명 
+                        ,IV01.MD_FNC_IVS_ACT_DIT_CD     AS MD_ACT_DIT_CD    --12계좌구분코드 
+                        ,ISNULL(IV99.MD_EAL_AMT,0)     AS MD_AET_AMT        --14마이데이터자산금액 
+                    FROM ( 
+                        SELECT    A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO 
+                            ,ACT_NM    --계좌명 
+                            ,MD_FNC_IVS_ACT_DIT_CD    --마이데이터금융투자계좌구분코드 (101:종합매매, 102:위탁, 103:파생상품, 104:단기금융상품, 105:연금, 106:현물, 107:집합투자증권, 108:isa, 109:기타) 
+                        FROM DBM.EMYDW_FIN_ACT_CLG AS A --금투01:마이데이터_금융투자계좌목록 
+                        INNER JOIN ( 
+                            SELECT    CUS_NO  
+                                ,MD_OGT_CD 
+                                ,MAX(BSE_DT) AS BSE_DT 
+                            FROM DBM.EMYDW_FIN_ACT_CLG V1 
+                            WHERE V1.BSE_DT <= VS_작업일 
+                            GROUP    BY CUS_NO  
+                                ,MD_OGT_CD 
+                        ) AS B 
+                        ON    A.BSE_DT        = B.BSE_DT 
+                        AND    A.CUS_NO         = B.CUS_NO 
+                        AND    A.MD_OGT_CD        = B.MD_OGT_CD 
+                        WHERE    A.MD_OGT_CD    = 'C1AACQ0000' 
+                    ) IV01 
+                    LEFT OUTER JOIN( 
+                        SELECT V1.CUS_NO, V1.MD_OGT_CD, V1.MD_ACT_NO, V1.MD_AET_DIT_CD, SUM(V1.MD_EAL_AMT) AS MD_EAL_AMT 
+                        FROM( 
+                            --1.예수금 
+                            SELECT    IV01.CUS_NO 
+                                ,IV01.MD_OGT_CD 
+                                ,IV01.MD_ACT_NO 
+                                ,CASE WHEN IV01.MD_FNC_IVS_ACT_DIT_CD ='105' THEN '04'     --연금자산예수금은 연금 
+                                    ELSE '01'                                              --그외 예수금은 예적금/수시입출 
+                                    END AS MD_AET_DIT_CD                                --5마이데이터자산구분코드 
+                                ,IV02.MD_EAL_AMT 
+                            FROM ( 
+                                SELECT    A.CUS_NO 
+                                    ,A.MD_OGT_CD 
+                                    ,A.MD_ACT_NO 
+                                    ,A.MD_FNC_IVS_ACT_DIT_CD    --마이데이터금융투자계좌구분코드 
+                                FROM DBM.EMYDW_FIN_ACT_CLG A --금투01:마이데이터_금융투자계좌목록 
+                                INNER JOIN ( 
+                                    SELECT    CUS_NO  
+                                        ,MD_OGT_CD 
+                                        ,MAX(BSE_DT) AS BSE_DT 
+                                    FROM DBM.EMYDW_FIN_ACT_CLG V1 
+                                    WHERE V1.BSE_DT <=  VS_작업일 
+                                    GROUP    BY CUS_NO  
+                                        ,MD_OGT_CD 
+                                ) AS B 
+                                ON    A.BSE_DT        = B.BSE_DT 
+                                AND    A.CUS_NO         = B.CUS_NO 
+                                AND    A.MD_OGT_CD        = B.MD_OGT_CD 
+                            ) IV01 
+                            INNER JOIN ( 
+                                SELECT    A.BSE_DT, A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO 
+                                    ,A.MD_DCA * ISNULL(B.SBY_BSE_XCG_RT,1) AS MD_EAL_AMT --마이데이터예수금(자산항목) 
+                                FROM DBM.EMYDW_FIN_ACT_BAS_IFO A --금투02:마이데이터_금융투자계좌기본정보 
+                                LEFT OUTER JOIN ( 
+                                    SELECT    BNK_PBA_XCG_RT_DT 
+                                        ,CUR_CD 
+                                        ,SBY_BSE_XCG_RT 
+                                    FROM ( 
+                                        SELECT  /*+ index(x ECBSW_BNK_PBA_XCG_RT_IX02) */ 
+                                             BNK_PBA_XCG_RT_DT 
+                                            ,CUR_CD 
+                                            ,SBY_BSE_XCG_RT 
+                                            ,ROW_NUMBER() OVER(PARTITION BY CUR_CD ORDER BY BNK_PBA_XCG_RT_DT DESC) AS RN 
+                                        FROM    DBM.ECBSW_BNK_PBA_XCG_RT  x 
+                                        WHERE   BNK_PBA_XCG_RT_DT <= VS_작업일 
+                                    ) AS V1 
+                                    WHERE    RN = 1 
+                                ) AS B 
+                                ON A.CUR_CD = B.CUR_CD 
+                                INNER JOIN ( 
+                                    SELECT    CUS_NO  
+                                        ,MD_OGT_CD 
+                                        ,MAX(BSE_DT) AS BSE_DT 
+                                    FROM DBM.EMYDW_FIN_ACT_BAS_IFO V1 
+                                    WHERE V1.BSE_DT <= VS_작업일 
+                                    GROUP    BY CUS_NO  
+                                        ,MD_OGT_CD 
+                                ) AS C 
+                                ON    A.BSE_DT        = C.BSE_DT 
+                                AND    A.CUS_NO         = C.CUS_NO 
+                                AND    A.MD_OGT_CD        = C.MD_OGT_CD 
+                            ) IV02 
+                            ON IV01.CUS_NO         = IV02.CUS_NO   --존재하는경우만 INNER JOIN  
+                            AND IV01.MD_OGT_CD     = IV02.MD_OGT_CD 
+                            AND IV01.MD_ACT_NO     = IV02.MD_ACT_NO 
+                            --2.증권평가금액  
+                            UNION ALL 
+                            SELECT    IV01.CUS_NO, IV01.MD_OGT_CD, IV01.MD_ACT_NO 
+                                ,CASE  
+                                    WHEN IV01.MD_FNC_IVS_ACT_DIT_CD ='105' THEN '04'     --연금자산 평가금액(+예수금필요) 
+                                    WHEN IV04.MD_PDT_KND_CD = '418' THEN '01'           --418:예적금/수시입출금자산 평가금액(+예수금필요) 
+                                    ELSE '02'                         --투자자산 평가금액   
+                                END AS MD_AET_DIT_CD    --5마이데이터자산구분코드 
+                                ,IV04.MD_EAL_AMT 
+                            FROM ( 
+                                SELECT    A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO 
+                                    ,ACT_NM    --계좌명 
+                                    ,MD_FNC_IVS_ACT_DIT_CD    --마이데이터금융투자계좌구분코드 
+                                FROM DBM.EMYDW_FIN_ACT_CLG AS A --금투01:마이데이터_금융투자계좌목록 
+                                INNER JOIN ( 
+                                    SELECT    CUS_NO  
+                                        ,MD_OGT_CD 
+                                        ,MAX(BSE_DT) AS BSE_DT 
+                                    FROM DBM.EMYDW_FIN_ACT_CLG V1 
+                                    WHERE V1.BSE_DT <= VS_작업일 
+                                    GROUP    BY CUS_NO  
+                                        ,MD_OGT_CD 
+                                ) AS B 
+                                ON    A.BSE_DT        = B.BSE_DT 
+                                AND    A.CUS_NO         = B.CUS_NO 
+                                AND    A.MD_OGT_CD        = B.MD_OGT_CD 
+                            ) IV01 
+                            LEFT OUTER JOIN ( 
+                                SELECT    A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO, 
+                                    A.MD_PDT_KND_CD, --상품종류코드  
+                                    A.MD_EAL_AMT * ISNULL(B.SBY_BSE_XCG_RT,1) AS MD_EAL_AMT --마이데이터평가금액(자산항목) 
+                                FROM DBM.EMYDW_FIN_ACT_PDT_IFO AS A --금투:04마이데이터_금융투자계좌상품정보 
+                                LEFT OUTER JOIN ( 
+                                    SELECT    BNK_PBA_XCG_RT_DT 
+                                        ,CUR_CD 
+                                        ,SBY_BSE_XCG_RT 
+                                    FROM ( 
+                                        SELECT  /*+ index(x ECBSW_BNK_PBA_XCG_RT_IX02) */ 
+                                             BNK_PBA_XCG_RT_DT 
+                                            ,CUR_CD 
+                                            ,SBY_BSE_XCG_RT 
+                                            ,ROW_NUMBER() OVER(PARTITION BY CUR_CD ORDER BY BNK_PBA_XCG_RT_DT DESC) AS RN 
+                                        FROM    DBM.ECBSW_BNK_PBA_XCG_RT  x 
+                                        WHERE   BNK_PBA_XCG_RT_DT <= VS_작업일 
+                                    ) AS V1 
+                                    WHERE    RN = 1 
+                                ) AS B 
+                                ON A.CUR_CD = B.CUR_CD 
+                                INNER JOIN ( 
+                                    SELECT    CUS_NO  
+                                        ,MD_OGT_CD 
+                                        ,MAX(BSE_DT) AS BSE_DT 
+                                    FROM DBM.EMYDW_FIN_ACT_PDT_IFO V1 
+                                    WHERE V1.BSE_DT <= VS_작업일 
+                                    GROUP    BY CUS_NO  
+                                        ,MD_OGT_CD 
+                                ) AS C 
+                                ON    A.BSE_DT        = C.BSE_DT 
+                                AND    A.CUS_NO         = C.CUS_NO 
+                                AND    A.MD_OGT_CD        = C.MD_OGT_CD                     
+                            ) IV04 
+                            ON IV01.CUS_NO         = IV04.CUS_NO 
+                            AND IV01.MD_OGT_CD     = IV04.MD_OGT_CD 
+                            AND IV01.MD_ACT_NO     = IV04.MD_ACT_NO 
+                            --3.증권대출금액 
+                            UNION ALL  
+                            SELECT IV02.CUS_NO, ISNULL(IV02.MD_OGT_CD,'0') AS MD_OGT_CD, IV02.MD_ACT_NO 
+                                ,'06' MD_AET_DIT_CD    --5마이데이터자산구분코드 
+                                ,(IV02.MD_CFD_FNN_AMT * ISNULL(B.SBY_BSE_XCG_RT,1)) -- 마이데이터신용융자금액 + 마이데이터대출금액 
+                                    + (IV02.MD_LON_AMT * ISNULL(B.SBY_BSE_XCG_RT,1)) AS MD_EAL_AMT 
+                            FROM DBM.EMYDW_FIN_ACT_BAS_IFO IV02 --금투:02마이데이터_금융투자계좌기본정보 
+                            LEFT OUTER JOIN ( 
+                                SELECT    BNK_PBA_XCG_RT_DT 
+                                    ,CUR_CD 
+                                    ,SBY_BSE_XCG_RT 
+                                FROM ( 
+                                    SELECT  /*+ index(x ECBSW_BNK_PBA_XCG_RT_IX02) */ 
+                                         BNK_PBA_XCG_RT_DT 
+                                        ,CUR_CD 
+                                        ,SBY_BSE_XCG_RT 
+                                        ,ROW_NUMBER() OVER(PARTITION BY CUR_CD ORDER BY BNK_PBA_XCG_RT_DT DESC) AS RN 
+                                    FROM    DBM.ECBSW_BNK_PBA_XCG_RT  x 
+                                    WHERE   BNK_PBA_XCG_RT_DT <= VS_작업일 
+                                ) AS V1 
+                                WHERE    RN = 1 
+                            ) AS B 
+                            ON IV02.CUR_CD = B.CUR_CD 
+                            INNER JOIN ( 
+                                SELECT    CUS_NO  
+                                    ,MD_OGT_CD 
+                                    ,MAX(BSE_DT) AS BSE_DT 
+                                FROM DBM.EMYDW_FIN_ACT_BAS_IFO V1 
+                                WHERE V1.BSE_DT <= VS_작업일 
+                                GROUP    BY CUS_NO  
+                                    ,MD_OGT_CD 
+                            ) AS C 
+                            ON    IV02.BSE_DT        = C.BSE_DT 
+                            AND    IV02.CUS_NO         = C.CUS_NO 
+                            AND    IV02.MD_OGT_CD        = C.MD_OGT_CD     
+                            WHERE    IV02.MD_CFD_FNN_AMT + IV02.MD_LON_AMT > 0 --(20210917수정)증권대출존재하는건만                     
+                        ) AS V1  
+                        GROUP BY CUS_NO, MD_OGT_CD, MD_ACT_NO, MD_AET_DIT_CD  
+                    ) IV99 
+                    ON IV01.CUS_NO         = IV99.CUS_NO 
+                    AND IV01.MD_OGT_CD     = IV99.MD_OGT_CD 
+                    AND IV01.MD_ACT_NO     = IV99.MD_ACT_NO 
+                ) AS V1 
+                GROUP BY V1.CUS_NO 
+        ) AS V11  
+        -- 22.10.11 마이데이터 상품별 추가항목 
+        LEFT OUTER JOIN ( 
+                SELECT DISTINCT V4.CUS_NO 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '401' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_국내주식_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '401' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_국내주식_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '402' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_해외주식_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '402' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_해외주식_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '403' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_국내채권_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '403' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_국내채권_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '404' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_해외채권_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '404' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_해외채권_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '405' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_대출채권_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '405' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_대출채권_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '406' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_국내파생결합증권_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '406' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_국내파생결합증권_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '407' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_해외파생결합증권_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '407' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_해외파생결합증권_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '408' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_국내장내파생상품_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '408' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_국내장내파생상품_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '409' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_해외장내파생상품_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '409' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_해외장내파생상품_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '410' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_기타파생상품_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '410' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_기타파생상품_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '411' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_국내단기금융상품_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '411' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_국내단기금융상품_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '412' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_해외단기금융상품_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '412' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_해외단기금융상품_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '413' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_국내펀드_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '413' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_국내펀드_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '414' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_해외역내펀드_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '414' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_해외역내펀드_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '415' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_해외역외펀드_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '415' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_해외역외펀드_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '416' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_랩_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '416' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_랩_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '417' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_신탁_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '417' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_신탁_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '418' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_현금과예금_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '418' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_현금과예금_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '419' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_퇴직연금_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '419' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_퇴직연금_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '420' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_현물_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '420' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_현물_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '421' THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_기타_보유자산' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD = '421' THEN 당사증권_상품별_보유종목수 ELSE 0 END) AS '당사증권_기타_보유종목수' 
+                        ,SUM(CASE WHEN MD_PDT_KND_CD NOT IN ('401', '402', '403', '404', '405', '406', '407', '408', '409', '410', '411', '412', '413', '414', '415', '416', '417', '418', '419', '420', '421') THEN 당사증권_상품별_보유자산 ELSE 0 END) AS '당사증권_상품별_현금성자산' 
+                FROM (        SELECT V4.CUS_NO 
+                                ,MD_PDT_KND_CD -- 상품종류코드  
+                                ,SUM(MD_EAL_AMT) AS 당사증권_상품별_보유자산 
+                                ,SUM(DISTINCT CASE WHEN MD_EAL_AMT <> 0 THEN 1  ELSE 0 END) AS 당사증권_상품별_보유종목수 
+                            FROM (    SELECT    A.BSE_DT, A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO, A.MD_PDT_KND_CD, A.MD_IEM_CD --마이데이터상품종류코드 
+                                                ,A.MD_EAL_AMT MD_EAL_AMT --마이데이터상품평가금 * ISNULL(B.SBY_BSE_XCG_RT,1) AS  
+                                                -- 401=국내주식 / 402=해외주식 / 403=국내채권 / 404=해외채권 / 405=대출채권 / 406=국내파생결합증권 / 407=해외파생결합증권 / 408=국내장내파생상품 / 409=해외장내파생상품 / 410=기타파생상품  
+                                                -- 411=국내단기금융상품 / 412=해외단기금융상품 / 413=국내펀드 / 414=해외(역내)펀드 / 415=해외(역외)펀드 / 416=랩 / 417=신탁 / 418=현금과예금 / 419=퇴직연금 / 420=현물 / 421=기타  
+                                        FROM DBM.EMYDW_FIN_ACT_PDT_IFO AS A --금투03:마이데이터_금융투자계좌상품정보 
+                                                LEFT OUTER JOIN ( 
+                                                        SELECT    BNK_PBA_XCG_RT_DT 
+                                                            ,CUR_CD 
+                                                            ,SBY_BSE_XCG_RT 
+                                                        FROM (  
+                                                            SELECT  /*+ index(x ECBSW_BNK_PBA_XCG_RT_IX02) */ 
+                                                                 BNK_PBA_XCG_RT_DT 
+                                                                ,CUR_CD 
+                                                                ,SBY_BSE_XCG_RT 
+                                                                ,ROW_NUMBER() OVER(PARTITION BY CUR_CD ORDER BY BNK_PBA_XCG_RT_DT DESC) AS RN 
+                                                            FROM    DBM.ECBSW_BNK_PBA_XCG_RT  x 
+                                                            WHERE   BNK_PBA_XCG_RT_DT <= VS_작업일 
+                                                        ) AS V1 
+                                                        WHERE    RN = 1 
+                                                ) AS B 
+                                                ON A.CUR_CD = B.CUR_CD 
+                                                INNER JOIN ( 
+                                                    SELECT    CUS_NO  
+                                                        ,MD_OGT_CD 
+                                                        ,MAX(BSE_DT) AS BSE_DT 
+                                                    FROM DBM.EMYDW_FIN_ACT_BAS_IFO V1 
+                                                    WHERE V1.BSE_DT <= VS_작업일 
+                                                    GROUP    BY CUS_NO  
+                                                        ,MD_OGT_CD 
+                                                ) AS C 
+                                                ON    A.BSE_DT        = C.BSE_DT 
+                                                AND    A.CUS_NO         = C.CUS_NO 
+                                                AND    A.MD_OGT_CD        = C.MD_OGT_CD 
+                                                -- 연금계좌제외 22.10.14 
+                                                LEFT OUTER JOIN ( 
+                                                        SELECT    A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO, MD_FNC_IVS_ACT_DIT_CD, MAX(A.BSE_DT) AS BSE_DT  
+                                                            --마이데이터금융투자계좌구분코드 (101:종합매매, 102:위탁, 103:파생상품, 104:단기금융상품, 105:연금, 106:현물, 107:집합투자증권, 108:isa, 190:기타) 
+                                                        FROM DBM.EMYDW_FIN_ACT_CLG AS A --금투01:마이데이터_금융투자계좌목록 
+                                                            WHERE A.BSE_DT <= VS_작업일 
+                                                            AND MD_FNC_IVS_ACT_DIT_CD <> '105'  
+                                                            GROUP BY A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO, MD_FNC_IVS_ACT_DIT_CD 
+                                                ) AS D 
+                                                ON A.MD_ACT_NO = D.MD_ACT_NO 
+                                                AND    A.MD_OGT_CD        = D.MD_OGT_CD 
+                                                -- AND A.BSE_DT = D.BSE_DT 
+                                                WHERE    A.MD_OGT_CD    = 'C1AACQ0000' 
+                                                -- AND MD_PDT_KND_CD = '418' 
+                            ) AS V4 
+                            GROUP BY V4.BSE_DT, V4.CUS_NO ,V4.MD_PDT_KND_CD  
+                ) AS V4  
+                GROUP BY CUS_NO 
+        ) AS V4 
+        ON V11.CUS_NO = V4.CUS_NO 
+    ) AS V17 
+    ON V1.CUS_NO = V17.CUS_NO 
+    LEFT OUTER JOIN ( 
+                    SELECT DISTINCT V2.CUS_NO 
+                        ,'Y' AS 원천카드가입여부 
+                        ,V2.카드_등록기관수 
+                        ,V2.카드_등록카드수 
+                        ,V2.카드결제금액잔고합 + V3.카드단기대출잔액 + V3.카드장기대출잔액 AS 카드잔고합 
+                    FROM ( 
+                        SELECT V1.CUS_NO 
+                            ,COUNT(DISTINCT V1.MD_OGT_CD) AS 카드_등록기관수 
+                            ,SUM(CASE WHEN V1.RN = 1 THEN 1 ELSE 1 END) AS 카드_등록카드수  
+                            ,SUM(V1.MD_AET_AMT) AS 카드결제금액잔고합 
+                        FROM    ( 
+                            SELECT    A.CUS_NO 
+                                ,A.MD_OGT_CD 
+                                ,A.MD_TRD_UQE_NO 
+                                ,A.MD_CRD_STL_SEQ_NO -- 마이데이터카드결제순서번호 
+                                ,ROW_NUMBER() OVER(PARTITION BY A.CUS_NO, A.MD_OGT_CD, A.MD_TRD_UQE_NO ORDER BY A.MD_CRD_STL_SEQ_NO DESC) AS RN 
+                                ,ISNULL(SUM(A.STL_XPN_AMT),0) AS MD_AET_AMT    --14마이데이터자산금액     
+                            FROM DBM.EMYDW_CRD_STL_IFO AS A --카드06:마이데이터_카드결제정보 
+                            INNER JOIN ( 
+                                SELECT    CUS_NO  
+                                    ,MD_OGT_CD 
+                                    ,MAX(BSE_DT) AS BSE_DT 
+                                FROM DBM.EMYDW_CRD_STL_IFO V1 
+                                WHERE V1.BSE_DT <= VS_작업일 
+                                GROUP    BY CUS_NO  
+                                    ,MD_OGT_CD 
+                                        ) AS B 
+                                ON    A.BSE_DT    = B.BSE_DT 
+                                AND    A.CUS_NO     = B.CUS_NO 
+                                AND    A.MD_OGT_CD    = B.MD_OGT_CD 
+                                WHERE    A.STL_XPN_DT     >= '20220901' --결제예정일자 지나지 않은 건만  
+                                AND    STL_XPN_AMT    > 0 
+                                GROUP    BY A.CUS_NO ,A.MD_OGT_CD 
+                                    ,A.MD_TRD_UQE_NO, A.MD_CRD_STL_SEQ_NO 
+                                ) AS V1 
+                                GROUP BY V1.CUS_NO 
+                        ) AS V2 
+                        LEFT OUTER JOIN ( 
+                                            SELECT DISTINCT V1.CUS_NO  
+                                                ,COUNT(CASE WHEN V1.분류값 = '카드단기대출' THEN V1.CUS_NO ELSE NULL END) AS 카드단기대출등록건수 
+                                                ,SUM(CASE WHEN V1.분류값 = '카드단기대출' THEN V1.MD_AET_AMT ELSE NULL END) AS 카드단기대출잔액 
+                                                ,COUNT(CASE WHEN V1.분류값 = '카드장기대출' THEN V1.CUS_NO ELSE NULL END) AS 카드장기대출등록건수 
+                                                ,SUM(CASE WHEN V1.분류값 = '카드장기대출' THEN V1.MD_AET_AMT ELSE NULL END) AS 카드장기대출잔액 
+                                                ,SUM(V1.MD_AET_AMT) AS 카드대출잔액 
+                                            FROM ( 
+                                                        --단기대출잔액 
+                                                        SELECT    A.CUS_NO 
+                                                            ,'카드단기대출' AS 분류값 
+                                                            ,ISNULL(SUM(SHM_LON_RND),0) AS MD_AET_AMT    --14마이데이터자산금액             
+                                                        FROM DBM.EMYDW_CRD_SHM_LON_IFO A --카드11:마이데이터_카드단기대출정보 
+                                                        INNER JOIN ( 
+                                                            SELECT    CUS_NO  
+                                                                ,MD_OGT_CD 
+                                                                ,MAX(BSE_DT) AS BSE_DT 
+                                                            FROM DBM.EMYDW_CRD_SHM_LON_IFO V1 
+                                                            WHERE V1.BSE_DT <= VS_작업일 
+                                                            GROUP    BY CUS_NO  
+                                                                ,MD_OGT_CD 
+                                                        ) AS B 
+                                                        ON    A.BSE_DT    = B.BSE_DT 
+                                                        AND    A.CUS_NO     = B.CUS_NO 
+                                                        AND    A.MD_OGT_CD    = B.MD_OGT_CD 
+                                                        GROUP BY A.CUS_NO             
+                                                        --카드장기대출잔액 
+                                                        UNION ALL 
+                                                        SELECT    A.CUS_NO 
+                                                            ,'카드장기대출' AS 분류값 
+                                                            ,ISNULL(SUM(MD_LTM_LON_RND),0) AS MD_AET_AMT    --14마이데이터자산금액     
+                                                        FROM DBM.EMYDW_CRD_LTM_LON_IFO A --카드12:마이데이터_카드장기대출정보 
+                                                        INNER JOIN ( 
+                                                            SELECT    CUS_NO  
+                                                                ,MD_OGT_CD 
+                                                                ,MAX(BSE_DT) AS BSE_DT 
+                                                            FROM DBM.EMYDW_CRD_LTM_LON_IFO V1 
+                                                            WHERE V1.BSE_DT <= VS_작업일 
+                                                            GROUP    BY CUS_NO  
+                                                                ,MD_OGT_CD 
+                                                        ) AS B 
+                                                        ON    A.BSE_DT    = B.BSE_DT 
+                                                        AND    A.CUS_NO     = B.CUS_NO 
+                                                        AND    A.MD_OGT_CD    = B.MD_OGT_CD 
+                                                        GROUP BY A.CUS_NO 
+                                                ) AS V1 
+                                                GROUP BY V1.CUS_NO 
+                                        ) AS V3 
+                                        ON V2.CUS_NO = V3.CUS_NO 
+    ) AS V10  
+    ON V1.CUS_NO = V10.CUS_NO 
+    LEFT OUTER JOIN ( 
+        SELECT DISTINCT V1.CUS_NO 
+            ,'Y' AS 원천전자금융가입여부  
+            ,COUNT(DISTINCT MD_OGT_CD) AS 전자금융등록기관수 
+            ,SUM(V1.MD_AET_AMT) AS 전자금융잔고합 
+        FROM ( 
+            SELECT    EF01.CUS_NO     AS CUS_NO    --2고객번호 
+                ,EF01.MD_OGT_CD     AS MD_OGT_CD --3마이데이터기관코드 
+                ,EF01.FCE_ID         AS FCE_ID    --9권면ID 
+                ,EF01.MMB_DCM_VL_IFO AS MMB_DCM_VL_IFO    --10회원식별값정보 
+                ,EF01.FCE_NM         AS MD_PDT_NM    --11상품명/계좌명 
+                ,EF02.MD_TOT_RND * ISNULL(B.SBY_BSE_XCG_RT,1)    AS MD_AET_AMT    --14마이데이터자산금액 
+            FROM ( 
+                    SELECT    A.BSE_DT 
+                        ,A.CUS_NO 
+                        ,A.MD_OGT_CD 
+                        ,A.FCE_ID 
+                        ,A.MMB_DCM_VL_IFO 
+                        ,A.CUR_CD -- 통화코드 
+                        ,A.FCE_NM    -- 권면명 
+                        ,A.MD_SND_OBJ_NDS_YN    --마이데이터전송대상요구여부 
+                        ,A.JIN_DT    --가입일자 
+                        ,A.FCE_LMT_AMT    --권면한도금액 
+                        ,A.MD_ATO_FILL_RGS_YN    --마이데이터자동충전등록여부 
+                    FROM DBM.EMYDW_EFNC_PEPM_CLG A --전금01:마이데이터_전자금융선불전자지급수단목록 
+                    INNER JOIN ( 
+                        SELECT    CUS_NO  
+                            ,MD_OGT_CD 
+                            ,MAX(BSE_DT) AS BSE_DT 
+                        FROM DBM.EMYDW_EFNC_PEPM_CLG V1 
+                        WHERE V1.BSE_DT <= VS_작업일 
+                        GROUP    BY CUS_NO  
+                            ,MD_OGT_CD 
+                                ) AS B 
+                    ON    A.BSE_DT    = B.BSE_DT 
+                    AND    A.CUS_NO     = B.CUS_NO 
+                    AND    A.MD_OGT_CD    = B.MD_OGT_CD 
+                ) EF01 
+                LEFT OUTER JOIN ( 
+                    SELECT    A.CUS_NO 
+                        ,A.MD_OGT_CD 
+                        ,A.FCE_ID 
+                        ,A.MMB_DCM_VL_IFO 
+                        ,A.MD_TOT_RND AS MD_TOT_RND    --마이데이터총잔액(자산항목) 
+                        ,A.MD_FILL_POT_RND        --마이데이터충전포인트잔액 
+                        ,A.MD_RVG_POT_RND        --마이데이터적립포인트잔액 
+                        ,A.MD_RVG_XPN_AMT        --마이데이터적립예정금액 
+                        ,A.CRD_POT_XNC_XPN_AMT        --카드포인트소멸예정금액 
+                    FROM DBM.EMYDW_EFNC_PEPM_RND_IFO A --전금02:마이데이터_전자금융선불전자지급수단잔액정보 
+                    INNER JOIN ( 
+                        SELECT    CUS_NO  
+                            ,MD_OGT_CD 
+                            ,MAX(BSE_DT) AS BSE_DT 
+                        FROM DBM.EMYDW_EFNC_PEPM_RND_IFO V1 
+                        WHERE V1.BSE_DT <= VS_작업일 
+                        GROUP    BY CUS_NO  
+                            ,MD_OGT_CD 
+                    ) AS B 
+                    ON    A.BSE_DT    = B.BSE_DT 
+                    AND    A.CUS_NO     = B.CUS_NO 
+                    AND    A.MD_OGT_CD    = B.MD_OGT_CD 
+                ) EF02 
+                ON EF01.CUS_NO             = EF02.CUS_NO  
+                AND EF01.MD_OGT_CD         = EF02.MD_OGT_CD  
+                AND EF01.FCE_ID         = EF02.FCE_ID  
+                AND EF01.MMB_DCM_VL_IFO     = EF02.MMB_DCM_VL_IFO      
+                LEFT OUTER JOIN ( 
+                    SELECT    BNK_PBA_XCG_RT_DT -- 은행공시환율일자 
+                        ,CUR_CD 
+                        ,SBY_BSE_XCG_RT -- 매매기준환율 
+                    FROM ( 
+                        SELECT  
+                             BNK_PBA_XCG_RT_DT 
+                            ,CUR_CD 
+                            ,SBY_BSE_XCG_RT 
+                            ,ROW_NUMBER() OVER(PARTITION BY CUR_CD ORDER BY BNK_PBA_XCG_RT_DT DESC) AS RN 
+                        FROM    DBM.ECBSW_BNK_PBA_XCG_RT 
+                        WHERE   BNK_PBA_XCG_RT_DT <= VS_작업일 
+                        ) AS V1 
+                        WHERE RN = 1 
+                ) B 
+                ON EF01.CUR_CD             = B.CUR_CD 
+                WHERE    MD_AET_AMT        > 0 
+        ) AS V1 
+        GROUP BY V1.CUS_NO, 원천전자금융가입여부  
+        HAVING 전자금융잔고합 > 0 
+    ) AS V11 
+    ON V1.CUS_NO = V11.CUS_NO 
+    LEFT OUTER JOIN ( 
+        SELECT DISTINCT T3.CUS_NO 
+            ,'Y' AS 원천차량가입여부 
+            ,COUNT(T3.CAR_RGS_NO) AS 자동차등록건수 
+            ,SUM(T3.VCL_QUT_PR) AS 자동차잔고합 
+        FROM ( 
+            SELECT DISTINCT T1.CUS_NO 
+                ,T1.CAR_RGS_NO  
+                ,T2.VCL_QUT_PR  
+            FROM DBM.EMYDW_VCL_BAS_IFO AS T1 -- 마이데이터_차량기본정보 
+            LEFT OUTER JOIN ( 
+                SELECT CUS_NO 
+                    ,CAR_RGS_NO  
+                    ,VCL_QUT_PR 
+            FROM EMYDW_VCL_QUT_IFO  
+            WHERE BSE_YM = VS_월작업일 
+            AND    CTN_SNO = 1 
+            ) AS T2 
+            ON T1.CUS_NO = T2.CUS_NO 
+            AND T1.CAR_RGS_NO = T2.CAR_RGS_NO 
+            ) AS T3 
+            GROUP BY T3.CUS_NO, 원천차량가입여부 
+            HAVING 자동차잔고합 > 0     
+    ) AS V13 
+    ON V1.CUS_NO = V13.CUS_NO 
+    LEFT OUTER JOIN ( 
+        SELECT DISTINCT T2.CUS_NO 
+            ,'Y' AS 원천부동산가입여부  
+            ,COUNT(T2.필지고유번호) AS 부동산등록건수 
+            ,SUM(T2.부동산가격) AS 부동산잔고합 
+        FROM ( 
+            SELECT T1.CUS_NO 
+                ,T1.PACL_UQE_NO AS 필지고유번호 
+                ,T1.FCS_QUT_PR  AS 예측시세가격 
+                ,T1.RET_PHS_AMT AS 부동산매입금액 
+                ,CASE WHEN ISNULL(T1.FCS_QUT_PR, 0) = 0 THEN T1.RET_PHS_AMT ELSE T1.FCS_QUT_PR END AS 부동산가격 -- 부동산예측시세 가격이 없다면 매입가격으로 대체  
+            FROM DBM.EMYDW_CUS_RET_RGS_IFO AS T1 -- 마이데이터_고객거주등록정보 
+             ) AS T2 
+            GROUP BY T2.CUS_NO 
+            HAVING 부동산잔고합 > 0     
+    ) AS V14 
+    ON V1.CUS_NO = V14.CUS_NO 
+    LEFT OUTER JOIN ( 
+        SELECT DISTINCT T2.CUS_NO 
+            ,'Y' AS 원천가상화폐가입여부 
+            ,SUM(T2.EAL_AMT) AS 가상화폐잔고합 
+        FROM ( 
+            SELECT T1.CUS_NO 
+                ,T1.EAL_AMT -- 평가금 
+            FROM DBM.EMYDW_CUS_VTL_CSH_IFO AS T1 -- 마이데이터_고객가상화폐정보  
+            WHERE DEL_YN = 'N' -- 삭제여부 
+            AND CUS_NO NOT IN ('104104721','102595165') 
+             ) AS T2 
+            GROUP BY T2.CUS_NO, 원천가상화폐가입여부 
+            HAVING 가상화폐잔고합 > 0 
+    ) AS V15 
+    ON V1.CUS_NO = V15.CUS_NO 
+LEFT OUTER JOIN ( 
+    SELECT DISTINCT CUS_NO 
+            ,'Y' as 원천IRP가입여부 
+            ,COUNT(DISTINCT MD_OGT_CD) AS IRP_등록기관수 
+            ,SUM(MD_AET_AMT) AS IRP잔고 
+            ,SUM(CASE WHEN MD_BIZR_IFO = 'invest' AND MD_OGT_CD = 'C1AACQ0000' THEN MD_AET_AMT ELSE 0 END) AS IRP_당사증권 
+            ,SUM(CASE WHEN MD_BIZR_IFO = 'invest' AND MD_OGT_CD = 'C1AACQ0000' THEN 1 ELSE 0 END) AS IRP_당사증권_계좌수 
+            ,SUM(CASE WHEN MD_BIZR_IFO = 'invest' AND MD_OGT_CD <> 'C1AACQ0000' THEN MD_AET_AMT ELSE 0 END) AS IRP_타사증권-- NH투자증권 제외 
+            ,SUM(CASE WHEN MD_BIZR_IFO = 'invest' AND MD_OGT_CD <> 'C1AACQ0000' THEN 1 ELSE 0 END) AS IRP_타사증권_계좌수 -- NH투자증권 제외 
+            ,SUM(CASE WHEN MD_BIZR_IFO = 'bank' THEN MD_AET_AMT ELSE 0 END) AS IRP_은행 
+            ,SUM(CASE WHEN MD_BIZR_IFO = 'bank' THEN 1 ELSE 0 END) AS IRP_은행_계좌수 
+            ,SUM(CASE WHEN MD_BIZR_IFO = 'insu' THEN MD_AET_AMT ELSE 0 END) AS IRP_보험 
+            ,SUM(CASE WHEN MD_BIZR_IFO = 'insu' THEN 1 ELSE 0 END) AS IRP_보험_계좌수 
+        FROM    ( 
+            SELECT    CUS_NO 
+                ,ISNULL(MD_OGT_CD,'_')         AS MD_OGT_CD        --3마이데이터기관코드 
+                --자산구분코드  
+                --,'04'                AS MD_AET_DIT_CD    --5마이데이터자산구분코드 
+                ,MD_BIZR_IFO                         --6마이데이터업권정보 
+                ,MD_ACT_NO             AS MD_ACT_NO        --7마이데이터계좌번호 
+                ,ISNULL(MD_EAL_AMT,0)         AS MD_AET_AMT        --14마이데이터자산금액     
+            FROM ( 
+                SELECT IRP01.CUS_NO, IRP01.MD_OGT_CD, IRP01.MD_BIZR_IFO, IRP01.MD_ACT_NO, IRP01.MD_PDT_NM 
+                    ,IRP02.MD_EAL_AMT 
+                FROM ( 
+                    SELECT A.BSE_DT, A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO 
+                        ,A.MD_PDT_NM        --마이데이터상품명 
+                        ,A.MD_TRD_UQE_NO    --마이데이터거래고유번호 
+                        ,A.MD_FXT_SND_YN    --마이데이터정기전송여부 
+                        ,B.MD_BIZR_IFO           --마이데이터업권정보 
+                    FROM DBM.EMYDW_COM_IRP_ACT_CLG AS A -- IRP01:마이데이터_공통IRP계좌목록 
+                    INNER JOIN DBM.EMYDW_OPEN_API_MD_OGT_IFO AS B --오픈API_마이데이터기관정보 
+                    ON B.MD_OGT_DIT_CD IN ('01','02')  --정보제공자 01,02인 경우만 회신 
+                    AND A.MD_OGT_CD = B.MD_OGT_CD 
+                    INNER JOIN ( 
+                        SELECT    CUS_NO  
+                            ,MD_OGT_CD 
+                            ,MAX(BSE_DT) AS BSE_DT 
+                        FROM DBM.EMYDW_COM_IRP_ACT_CLG AS V1 
+                        WHERE V1.BSE_DT <= VS_작업일 
+                        GROUP    BY CUS_NO  
+                            ,MD_OGT_CD 
+                    ) AS C 
+                    ON    A.BSE_DT        = C.BSE_DT 
+                    AND    A.CUS_NO         = C.CUS_NO 
+                    AND    A.MD_OGT_CD        = C.MD_OGT_CD 
+                ) IRP01     
+                LEFT OUTER JOIN ( 
+                    SELECT     A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO 
+                        --,ISNULL(IRP_ACT_EAL_AMT,0) + ISNULL(IRP_ACT_RND,0) AS MD_EAL_AMT --(20210917수정)IRP계좌평가금액(자산항목):계좌평가금액 + IRP계좌잔액         
+                        ,ISNULL(IRP_ACT_EAL_AMT,0) AS MD_EAL_AMT --(20211026수정)IRP계좌평가금액(자산항목)만 사용 
+                        ,IRP_ACT_EAL_AMT --계좌평가금액 
+                        ,IRP_ACT_RND    --IRP계좌잔액 
+                        ,MD_USE_CLD_BDN_AMT    --마이데이터사용자부담금액 
+                        ,SBR_BDN_AMT    --가입자부담금액 
+                        ,OPN_DT    --개설일자 
+                        ,MD_FST_RPM_DT    --마이데이터최초입금일자 
+                        ,MD_FST_RGM_JIN_DT    --마이데이터최초제도가입일자 
+                        ,PNS_OUM_STA_DT    --연금개시시작일자 
+                    FROM DBM.EMYDW_COM_IRP_ACT_BAS_IFO AS A --IRP02:마이데이터_공통IRP계좌기본정보 
+                    INNER JOIN ( 
+                        SELECT    CUS_NO  
+                            ,MD_OGT_CD 
+                            ,MAX(BSE_DT) AS BSE_DT 
+                        FROM DBM.EMYDW_COM_IRP_ACT_BAS_IFO V1 
+                        WHERE V1.BSE_DT <= VS_작업일 
+                        GROUP    BY CUS_NO  
+                            ,MD_OGT_CD 
+                    ) AS B 
+                    ON    A.BSE_DT        = B.BSE_DT 
+                    AND    A.CUS_NO         = B.CUS_NO 
+                    AND    A.MD_OGT_CD        = B.MD_OGT_CD 
+                ) IRP02 
+                ON IRP01.CUS_NO     = IRP02.CUS_NO  
+                AND IRP01.MD_OGT_CD     = IRP02.MD_OGT_CD  
+                AND IRP01.MD_ACT_NO     = IRP02.MD_ACT_NO      
+                LEFT OUTER JOIN ( 
+                    SELECT    A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO 
+                        ,SUM(MD_EAL_AMT) AS MD_EAL_AMT --마이데이터평가금액 
+                        ,SUM(MD_IVS_AMT) AS MD_IVS_AMT    --마이데이터투자금액 
+                        ,SUM(MD_HLD_SQTY) AS MD_HLD_SQTY    --마이데이터보유좌수 
+                    FROM DBM.EMYDW_COM_IRP_ACT_APD_IFO A --IRP03:마이데이터_공통IRP계좌추가정보 
+                    INNER JOIN ( 
+                        SELECT    CUS_NO  
+                            ,MD_OGT_CD 
+                            ,MAX(BSE_DT) AS BSE_DT 
+                        FROM DBM.EMYDW_COM_IRP_ACT_APD_IFO V1 
+                        WHERE V1.BSE_DT <= VS_작업일 
+                        GROUP    BY CUS_NO  
+                            ,MD_OGT_CD 
+                    ) AS B 
+                    ON    A.BSE_DT        = B.BSE_DT 
+                    AND    A.CUS_NO         = B.CUS_NO 
+                    AND    A.MD_OGT_CD        = B.MD_OGT_CD 
+                    GROUP BY A.CUS_NO, A.MD_OGT_CD, A.MD_ACT_NO 
+                ) IRP03         
+                ON IRP01.CUS_NO     = IRP03.CUS_NO  
+                AND IRP01.MD_OGT_CD     = IRP03.MD_OGT_CD  
+                AND IRP01.MD_ACT_NO     = IRP03.MD_ACT_NO  
+            ) AS V1 
+        ) AS V1 
+        GROUP    BY CUS_NO 
+        HAVING    IRP잔고        > 0     
+) AS V16 
+ON V1.CUS_NO = V16.CUS_NO 
+/* 
+LEFT OUTER JOIN EALSM_MM_CUS_SGM AS ADD1 -- 분석_월고객세그먼트 
+ON V1.CUS_NO = ADD1.CUS_NO 
+AND ADD1.BSE_YM = VS_월작업일 
+LEFT OUTER JOIN ECMSM_CUS_PDT_HLD_AIF AS ADD2 -- CMS_DM_고객상품보유추가정보  
+ON V1.CUS_NO = ADD2.CUS_NO 
+AND ADD2.BSE_DT = VS_작업일 
+LEFT OUTER JOIN ECMSM_CUS_YN_AIF AS ADD3 -- CMS_DM_고객여부추가정보H 
+ON V1.CUS_NO = ADD3.CUS_NO 
+AND ADD3.BSE_DT = VS_작업일 
+AND ADD3.NMS_SVC_DIT_CD ='02' -- 나무멤버스서비스구분코드 
+LEFT OUTER JOIN( 
+    SELECT DISTINCT V1.CUS_NO 
+            , ISNULL(화면1_접속횟수,0) AS 화면1_접속횟수 
+            , ISNULL(화면1_접속일수,0) AS 화면1_접속일수 
+            , ISNULL(화면1_유입화면,'화면미접속') AS 화면1_유입화면 
+            , ISNULL(화면1_유출화면,'화면미접속') AS 화면1_유출화면 
+            , ISNULL(화면2_접속횟수,0) AS 화면2_접속횟수 
+            , ISNULL(화면2_접속일수,0) AS 화면2_접속일수 
+            , ISNULL(화면2_유입화면,'화면미접속') AS 화면2_유입화면 
+            , ISNULL(화면2_유출화면,'화면미접속') AS 화면2_유출화면 
+            , ISNULL(화면3_접속횟수,0) AS 화면3_접속횟수 
+            , ISNULL(화면3_접속일수,0) AS 화면3_접속일수 
+            , ISNULL(화면3_유입화면,'화면미접속') AS 화면3_유입화면 
+            , ISNULL(화면3_유출화면,'화면미접속') AS 화면3_유출화면 
+            , ISNULL(화면4_접속횟수,0) AS 화면4_접속횟수 
+            , ISNULL(화면4_접속일수,0) AS 화면4_접속일수 
+            , ISNULL(화면4_유입화면,'화면미접속') AS 화면4_유입화면 
+            , ISNULL(화면4_유출화면,'화면미접속') AS 화면4_유출화면 
+            , ISNULL(화면5_접속횟수,0) AS 화면5_접속횟수 
+            , ISNULL(화면5_접속일수,0) AS 화면5_접속일수 
+            , ISNULL(화면5_유입화면,'화면미접속') AS 화면5_유입화면 
+            , ISNULL(화면5_유출화면,'화면미접속') AS 화면5_유출화면 
+            , ISNULL(화면6_접속횟수,0) AS 화면6_접속횟수 
+            , ISNULL(화면6_접속일수,0) AS 화면6_접속일수 
+            , ISNULL(화면6_유입화면,'화면미접속') AS 화면6_유입화면 
+            , ISNULL(화면6_유출화면,'화면미접속') AS 화면6_유출화면 
+            , ISNULL(화면7_접속횟수,0) AS 화면7_접속횟수 
+            , ISNULL(화면7_접속일수,0) AS 화면7_접속일수 
+            , ISNULL(화면7_유입화면,'화면미접속') AS 화면7_유입화면 
+            , ISNULL(화면7_유출화면,'화면미접속') AS 화면7_유출화면 
+    FROM ( 
+        SELECT CUS_NO 
+        FROM EALSM_MM_MDI_CNO_IFO -- 분석_DM_월매체접속정보 
+        WHERE BSE_YM = VS_월작업일  
+        AND SUBSTR(SRN_IFO, 2, 4) IN ('7840', '7850', '7910', '7940', '7930', '7920', '7851') -- 화면정보 eventview만을 보기위함  
+        AND EVT_IFO1 = '_' 
+        AND EVT_IFO2 = '_' 
+        AND EVT_IFO3 = '_' 
+    ) AS V1 
+    LEFT OUTER JOIN ( 
+        SELECT CUS_NO 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7840' THEN MM_CNO_NBT END AS 화면1_접속횟수 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7840' THEN MM_CNO_DD_CNT END AS 화면1_접속일수 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7840' THEN MAX_IFW_SRN_IFO END AS 화면1_유입화면 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7840' THEN MAX_OFW_SRN_IFO END AS 화면1_유출화면 
+        FROM ( 
+            SELECT CUS_NO, SRN_IFO,MM_CNO_NBT, MM_CNO_DD_CNT, MAX_IFW_SRN_IFO, MAX_OFW_SRN_IFO 
+            FROM EALSM_MM_MDI_CNO_IFO 
+            WHERE BSE_YM = VS_월작업일 
+            AND SUBSTR(SRN_IFO, 2, 4) IN ('7840')  -- 화면1 서비스 가이드 
+            AND EVT_IFO1 = '_' 
+            AND EVT_IFO2 = '_' 
+            AND EVT_IFO3 = '_' 
+            ) AS V1 
+    ) AS V2 
+    ON V1.CUS_NO = V2.CUS_NO 
+    LEFT OUTER JOIN ( 
+        SELECT CUS_NO 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7850' THEN MM_CNO_NBT END AS 화면2_접속횟수 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7850' THEN MM_CNO_DD_CNT END AS 화면2_접속일수 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7850' THEN MAX_IFW_SRN_IFO END AS 화면2_유입화면 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7850' THEN MAX_OFW_SRN_IFO END AS 화면2_유출화면 
+        FROM ( 
+            SELECT CUS_NO, SRN_IFO,MM_CNO_NBT, MM_CNO_DD_CNT, MAX_IFW_SRN_IFO, MAX_OFW_SRN_IFO 
+            FROM EALSM_MM_MDI_CNO_IFO 
+            WHERE BSE_YM = VS_월작업일 
+            AND SUBSTR(SRN_IFO, 2, 4) IN ('7850')  -- 화면2 통합자산현황 
+            AND EVT_IFO1 = '_' 
+            AND EVT_IFO2 = '_' 
+            AND EVT_IFO3 = '_' 
+            ) AS V1 
+    ) AS V3 
+    ON V1.CUS_NO = V3.CUS_NO 
+    LEFT OUTER JOIN ( 
+        SELECT CUS_NO 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7910' THEN MM_CNO_NBT END AS 화면3_접속횟수 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7910' THEN MM_CNO_DD_CNT END AS 화면3_접속일수 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7910' THEN MAX_IFW_SRN_IFO END AS 화면3_유입화면 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7910' THEN MAX_OFW_SRN_IFO END AS 화면3_유출화면 
+        FROM ( 
+            SELECT CUS_NO, SRN_IFO,MM_CNO_NBT, MM_CNO_DD_CNT, MAX_IFW_SRN_IFO, MAX_OFW_SRN_IFO 
+            FROM EALSM_MM_MDI_CNO_IFO 
+            WHERE BSE_YM = VS_월작업일 
+            AND SUBSTR(SRN_IFO, 2, 4) IN ('7910')  -- 화면3 투자성과 리포트 
+            AND EVT_IFO1 = '_' 
+            AND EVT_IFO2 = '_' 
+            AND EVT_IFO3 = '_' 
+            ) AS V1 
+    ) AS V4 
+    ON V1.CUS_NO = V4.CUS_NO 
+    LEFT OUTER JOIN ( 
+        SELECT CUS_NO 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7940' THEN MM_CNO_NBT END AS 화면4_접속횟수 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7940' THEN MM_CNO_DD_CNT END AS 화면4_접속일수 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7940' THEN MAX_IFW_SRN_IFO END AS 화면4_유입화면 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7940' THEN MAX_OFW_SRN_IFO END AS 화면4_유출화면 
+        FROM ( 
+            SELECT CUS_NO, SRN_IFO,MM_CNO_NBT, MM_CNO_DD_CNT, MAX_IFW_SRN_IFO, MAX_OFW_SRN_IFO 
+            FROM EALSM_MM_MDI_CNO_IFO 
+            WHERE BSE_YM = VS_월작업일 
+            AND SUBSTR(SRN_IFO, 2, 4) IN ('7940')  -- 화면4 나의 소비 
+            AND EVT_IFO1 = '_' 
+            AND EVT_IFO2 = '_' 
+            AND EVT_IFO3 = '_' 
+            ) AS V1 
+    ) AS V5 
+    ON V1.CUS_NO = V5.CUS_NO 
+    LEFT OUTER JOIN ( 
+        SELECT CUS_NO 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7930' THEN MM_CNO_NBT END AS 화면5_접속횟수 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7930' THEN MM_CNO_DD_CNT END AS 화면5_접속일수 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7930' THEN MAX_IFW_SRN_IFO END AS 화면5_유입화면 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7930' THEN MAX_OFW_SRN_IFO END AS 화면5_유출화면 
+        FROM ( 
+            SELECT CUS_NO, SRN_IFO,MM_CNO_NBT, MM_CNO_DD_CNT, MAX_IFW_SRN_IFO, MAX_OFW_SRN_IFO 
+            FROM EALSM_MM_MDI_CNO_IFO 
+            WHERE BSE_YM = VS_월작업일 
+            AND SUBSTR(SRN_IFO, 2, 4) IN ('7930')  -- 화면5 금융알리미 
+            AND EVT_IFO1 = '_' 
+            AND EVT_IFO2 = '_' 
+            AND EVT_IFO3 = '_' 
+            ) AS V1 
+    ) AS V6 
+    ON V1.CUS_NO = V6.CUS_NO 
+    LEFT OUTER JOIN ( 
+        SELECT CUS_NO 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7920' THEN MM_CNO_NBT END AS 화면6_접속횟수 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7920' THEN MM_CNO_DD_CNT END AS 화면6_접속일수 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7920' THEN MAX_IFW_SRN_IFO END AS 화면6_유입화면 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7920' THEN MAX_OFW_SRN_IFO END AS 화면6_유출화면 
+        FROM ( 
+            SELECT CUS_NO, SRN_IFO,MM_CNO_NBT, MM_CNO_DD_CNT, MAX_IFW_SRN_IFO, MAX_OFW_SRN_IFO 
+            FROM EALSM_MM_MDI_CNO_IFO 
+            WHERE BSE_YM = VS_월작업일 
+            AND SUBSTR(SRN_IFO, 2, 4) IN ('7920')  -- 화면6 마이데이터등록/관리 
+            AND EVT_IFO1 = '_' 
+            AND EVT_IFO2 = '_' 
+            AND EVT_IFO3 = '_' 
+            ) AS V1 
+    ) AS V7 
+    ON V1.CUS_NO = V7.CUS_NO 
+    LEFT OUTER JOIN ( 
+        SELECT CUS_NO 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7851' THEN MM_CNO_NBT END AS 화면7_접속횟수 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7851' THEN MM_CNO_DD_CNT END AS 화면7_접속일수 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7851' THEN MAX_IFW_SRN_IFO END AS 화면7_유입화면 
+            , CASE WHEN SUBSTR(SRN_IFO, 2, 4) = '7851' THEN MAX_OFW_SRN_IFO END AS 화면7_유출화면 
+        FROM ( 
+            SELECT CUS_NO, SRN_IFO,MM_CNO_NBT, MM_CNO_DD_CNT, MAX_IFW_SRN_IFO, MAX_OFW_SRN_IFO 
+            FROM EALSM_MM_MDI_CNO_IFO 
+            WHERE BSE_YM = VS_월작업일 
+            AND SUBSTR(SRN_IFO, 2, 4) IN ('7851')  -- 화면7 서비스가입 
+            AND EVT_IFO1 = '_' 
+            AND EVT_IFO2 = '_' 
+            AND EVT_IFO3 = '_' 
+            ) AS V1 
+    ) AS V8 
+    ON V1.CUS_NO = V8.CUS_NO 
+) AS ADD4 
+ON V1.CUS_NO = ADD4.CUS_NO 
+*/ 
+; 
+
+SELECT * FROM #MYDATA_01;  
+
+
+
+
+
+
+
+
+
+ 
